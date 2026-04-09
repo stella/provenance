@@ -224,7 +224,7 @@ fn run_command(mut command: Command, label: &str, output_path: Option<&Path>) ->
     let output = command
         .output()
         .into_diagnostic()
-        .wrap_err_with(|| format!("failed to run {}", label))?;
+        .wrap_err_with(|| format!("failed to run {label}"))?;
     if !output.status.success() {
         let stderr = String::from_utf8_lossy(&output.stderr);
         let stdout = String::from_utf8_lossy(&output.stdout);

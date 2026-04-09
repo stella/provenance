@@ -170,7 +170,7 @@ fn generate_creates_outputs_for_projects_and_containers() {
     );
     write_file(
         &temp.path().join(".stella-compliance.yml"),
-        r#"version: 1
+        r"version: 1
 output_dir: compliance
 projects:
   - id: root
@@ -181,7 +181,7 @@ projects:
 containers:
   - name: stella-core
     image: ghcr.io/stella/core:latest
-"#,
+",
     );
 
     cargo_bin()
@@ -216,14 +216,14 @@ fn check_passes_when_outputs_are_current() {
     write_file(&temp.path().join("package.json"), r#"{"name":"root"}"#);
     write_file(
         &temp.path().join(".stella-compliance.yml"),
-        r#"version: 1
+        r"version: 1
 output_dir: compliance
 projects:
   - id: root
     path: .
     ecosystems:
       - javascript
-"#,
+",
     );
 
     cargo_bin()
@@ -251,14 +251,14 @@ fn check_and_diff_report_drift() {
     write_file(&temp.path().join("package.json"), r#"{"name":"root"}"#);
     write_file(
         &temp.path().join(".stella-compliance.yml"),
-        r#"version: 1
+        r"version: 1
 output_dir: compliance
 projects:
   - id: root
     path: .
     ecosystems:
       - javascript
-"#,
+",
     );
 
     cargo_bin()

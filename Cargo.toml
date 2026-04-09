@@ -10,6 +10,32 @@ homepage = "https://github.com/stella/stella-compliance"
 keywords = ["compliance", "sbom", "licenses", "javascript", "rust"]
 categories = ["command-line-utilities", "development-tools"]
 
+[lints.clippy]
+cast_lossless = "warn"
+doc_link_with_quotes = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+manual_is_variant_and = "warn"
+manual_let_else = "warn"
+match_wildcard_for_single_variants = "warn"
+needless_continue = "warn"
+needless_pass_by_ref_mut = "warn"
+needless_raw_string_hashes = "warn"
+ptr_as_ptr = "warn"
+uninlined_format_args = "warn"
+unnecessary_wraps = "warn"
+unused_async = "warn"
+unused_self = "warn"
+used_underscore_binding = "warn"
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.rustdoc]
+private_intra_doc_links = "allow"
+
 [dependencies]
 clap = { version = "4.5.39", features = ["derive"] }
 ignore = "0.4.24"
