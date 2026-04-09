@@ -49,7 +49,8 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, output_dir: Option<PathB
         .wrap_err_with(|| format!("failed to resolve {}", root.display()))?;
     let config = Config::load(&root, config_path.as_deref())?;
     let output_path = resolve_output_dir(&root, &config, output_dir.as_deref());
-    let report = generate_all(&root, &config, &output_path)?;
+    let report_output_dir = display_relative(&root, &output_path);
+    let report = generate_all(&root, &config, &output_path, &report_output_dir)?;
 
     println!(
         "Generated {} project(s) and {} container(s) into {}",
@@ -60,13 +61,18 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, output_dir: Option<PathB
     Ok(())
 }
 
-pub fn generate_all(root: &Path, config: &Config, output_path: &Path) -> Result<ComplianceReport> {
+pub fn generate_all(
+    root: &Path,
+    config: &Config,
+    output_path: &Path,
+    report_output_dir: &str,
+) -> Result<ComplianceReport> {
     config.validate()?;
     prepare_output_dir(output_path)?;
 
     let mut report = ComplianceReport {
         version: 1,
-        output_dir: String::from("."),
+        output_dir: report_output_dir.to_string(),
         projects: Vec::new(),
         containers: Vec::new(),
     };
@@ -173,7 +179,7 @@ fn prepare_output_dir(output_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn display_relative(root: &Path, path: &Path) -> String {
+pub(crate) fn display_relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .display()

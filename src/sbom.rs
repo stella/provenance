@@ -202,6 +202,7 @@ pub fn extract_rust_notice_entries(
     let output = Command::new("cargo")
         .arg("metadata")
         .arg("--format-version=1")
+        .arg("--locked")
         .arg("--manifest-path")
         .arg(&manifest_path)
         .output()
@@ -233,7 +234,7 @@ pub fn extract_rust_notice_entries(
             Some(DependencyNotice {
                 package: package.name,
                 version: package.version,
-                licenses: vec![license.to_string()],
+                licenses: normalize_cargo_license(license),
             })
         })
         .collect::<Vec<_>>();
@@ -251,6 +252,25 @@ fn is_internal_package(package: &str, internal_scopes: &[String]) -> bool {
                 .strip_prefix(scope)
                 .is_some_and(|suffix| suffix.starts_with('/'))
     })
+}
+
+fn normalize_cargo_license(license: &str) -> Vec<String> {
+    let license = license.trim();
+    if license.is_empty() {
+        return Vec::new();
+    }
+
+    let is_simple_or_expression = license.contains(" OR ")
+        && !license.contains(" AND ")
+        && !license.contains(" WITH ")
+        && !license.contains('(')
+        && !license.contains(')');
+
+    if is_simple_or_expression {
+        return normalize_licenses(license.split(" OR ").map(ToString::to_string).collect());
+    }
+
+    vec![license.to_string()]
 }
 
 fn resolve_project_path(root: &Path, project_path: &Path) -> PathBuf {
@@ -371,12 +391,7 @@ fn normalize_sbom_file(path: &Path) -> Result<()> {
 fn normalize_sbom_value(value: &mut Value) {
     remove_object_key(value, &["serialNumber"]);
     remove_object_key(value, &["metadata", "timestamp"]);
-
-    if let Some(annotations) = value.get_mut("annotations").and_then(Value::as_array_mut) {
-        for annotation in annotations {
-            remove_object_key(annotation, &["timestamp"]);
-        }
-    }
+    remove_object_key(value, &["annotations"]);
 }
 
 fn remove_object_key(value: &mut Value, path: &[&str]) {
@@ -399,7 +414,8 @@ fn remove_object_key(value: &mut Value, path: &[&str]) {
 mod tests {
     use super::{
         Component, ComponentLicense, LicenseReference, SbomDocument, extract_notice_entries,
-        extract_rust_notice_entries, is_internal_package, normalize_sbom_value,
+        extract_rust_notice_entries, is_internal_package, normalize_cargo_license,
+        normalize_sbom_value,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -501,9 +517,20 @@ mod tests {
 
         assert!(sbom.get("serialNumber").is_none());
         assert!(sbom["metadata"].get("timestamp").is_none());
-        assert!(sbom["annotations"][0].get("timestamp").is_none());
+        assert!(sbom.get("annotations").is_none());
         assert_eq!(sbom["metadata"]["component"]["name"], "package");
-        assert_eq!(sbom["annotations"][0]["text"], "generated");
+    }
+
+    #[test]
+    fn normalizes_simple_cargo_or_license_expressions() {
+        assert_eq!(
+            normalize_cargo_license("MIT OR Apache-2.0"),
+            vec![String::from("Apache-2.0"), String::from("MIT")]
+        );
+        assert_eq!(
+            normalize_cargo_license("(MIT OR Apache-2.0) AND Unicode-3.0"),
+            vec![String::from("(MIT OR Apache-2.0) AND Unicode-3.0")]
+        );
     }
 
     #[test]
