@@ -171,7 +171,7 @@ fn resolve_project_path(root: &Path, project_path: &Path) -> PathBuf {
 }
 
 fn resolve_cdxgen() -> Result<CommandSpec> {
-    if let Ok(path) = env::var("STELLA_COMPLIANCE_CDXGEN") {
+    if let Ok(path) = env::var("PROVENANCE_CDXGEN") {
         return Ok(CommandSpec {
             program: PathBuf::from(path),
             prefix_args: Vec::new(),
@@ -197,12 +197,12 @@ fn resolve_cdxgen() -> Result<CommandSpec> {
     }
 
     Err(miette!(
-        "unable to locate cdxgen. Install it globally, or expose it via bunx/npx, or set STELLA_COMPLIANCE_CDXGEN"
+        "unable to locate cdxgen. Install it globally, or expose it via bunx/npx, or set PROVENANCE_CDXGEN"
     ))
 }
 
 fn resolve_syft() -> Result<CommandSpec> {
-    if let Ok(path) = env::var("STELLA_COMPLIANCE_SYFT") {
+    if let Ok(path) = env::var("PROVENANCE_SYFT") {
         return Ok(CommandSpec {
             program: PathBuf::from(path),
             prefix_args: Vec::new(),
@@ -216,7 +216,7 @@ fn resolve_syft() -> Result<CommandSpec> {
     }
 
     Err(miette!(
-        "unable to locate syft. Install it or set STELLA_COMPLIANCE_SYFT"
+        "unable to locate syft. Install it or set PROVENANCE_SYFT"
     ))
 }
 

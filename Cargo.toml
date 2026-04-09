@@ -1,13 +1,13 @@
 [package]
-name = "stella-compliance"
+name = "provenance"
 version = "0.1.0"
 edition = "2024"
 rust-version = "1.85"
-description = "OSS-first compliance CLI for JavaScript and Rust repositories"
+description = "Generate SBOMs and third-party notices for JavaScript and Rust repositories"
 license = "MIT"
-repository = "https://github.com/stella/stella-compliance"
-homepage = "https://github.com/stella/stella-compliance"
-keywords = ["compliance", "sbom", "licenses", "javascript", "rust"]
+repository = "https://github.com/stella/provenance"
+homepage = "https://github.com/stella/provenance"
+keywords = ["provenance", "sbom", "licenses", "javascript", "rust"]
 categories = ["command-line-utilities", "development-tools"]
 
 [lints.clippy]

@@ -23,7 +23,7 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, force: bool) -> Result<(
 
     let config = Config {
         version: 1,
-        output_dir: PathBuf::from("compliance"),
+        output_dir: PathBuf::from("provenance"),
         projects: discover_projects(&root)?,
         containers: Vec::new(),
     };

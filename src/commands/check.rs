@@ -16,19 +16,19 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, output_dir: Option<PathB
     let config = Config::load(&root, config_path.as_deref())?;
     let checked_in_output = resolve_output_dir(&root, &config, output_dir.as_deref());
     let temp = tempfile::tempdir().into_diagnostic()?;
-    let generated_output = temp.path().join("compliance");
+    let generated_output = temp.path().join("provenance");
 
     generate_all(&root, &config, &generated_output)?;
 
     let deltas = compare_dirs(&checked_in_output, &generated_output)?;
     if deltas.is_empty() {
-        println!("Compliance outputs are up to date.");
+        println!("Generated outputs are up to date.");
         return Ok(());
     }
 
     let rendered = render_deltas(&deltas);
     Err(miette!(
-        "Compliance outputs are stale.\n\n{}\nRun `stella-compliance generate --root {}` to refresh them.",
+        "Generated outputs are stale.\n\n{}\nRun `provenance generate --root {}` to refresh them.",
         rendered,
         root.display()
     ))
