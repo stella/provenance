@@ -574,6 +574,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "provenance"
+version = "0.1.0"
+dependencies = [
+ "assert_cmd",
+ "assert_fs",
+ "clap",
+ "ignore",
+ "miette",
+ "predicates",
+ "serde",
+ "serde_json",
+ "serde_yaml",
+ "similar",
+ "tempfile",
+ "toml",
+ "which",
+]
+
+[[package]]
 name = "quote"
 version = "1.0.45"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -727,25 +746,6 @@ name = "similar"
 version = "2.7.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "bbbb5d9659141646ae647b42fe094daf6c6192d1620870b449d9557f748b2daa"
-
-[[package]]
-name = "stella-compliance"
-version = "0.1.0"
-dependencies = [
- "assert_cmd",
- "assert_fs",
- "clap",
- "ignore",
- "miette",
- "predicates",
- "serde",
- "serde_json",
- "serde_yaml",
- "similar",
- "tempfile",
- "toml",
- "which",
-]
 
 [[package]]
 name = "strsim"

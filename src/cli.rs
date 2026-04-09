@@ -9,7 +9,7 @@ use crate::commands;
 #[command(
     author,
     version,
-    about = "OSS-first compliance CLI for JavaScript and Rust repositories",
+    about = "Generate SBOMs and third-party notices for JavaScript and Rust repositories",
     long_about = None
 )]
 pub struct Cli {
@@ -33,9 +33,9 @@ pub enum Commands {
         #[arg(long)]
         force: bool,
     },
-    /// Generate compliance artifacts from the current config.
+    /// Generate SBOM and notice artifacts from the current config.
     Generate,
-    /// Fail if generated compliance artifacts drift from checked-in outputs.
+    /// Fail if generated artifacts drift from checked-in outputs.
     Check,
     /// Show the current diff between generated and checked-in outputs.
     Diff,

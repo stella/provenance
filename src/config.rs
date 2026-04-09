@@ -47,7 +47,7 @@ impl Ecosystem {
 }
 
 fn default_output_dir() -> PathBuf {
-    PathBuf::from("compliance")
+    PathBuf::from("provenance")
 }
 
 impl Config {
@@ -114,7 +114,7 @@ pub fn resolve_config_path(root: &Path, explicit_path: Option<&Path>) -> PathBuf
     match explicit_path {
         Some(path) if path.is_absolute() => path.to_path_buf(),
         Some(path) => root.join(path),
-        None => root.join(".stella-compliance.yml"),
+        None => root.join(".provenance.yml"),
     }
 }
 

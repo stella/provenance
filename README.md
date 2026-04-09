@@ -1,6 +1,10 @@
-# stella-compliance
+<p align="center">
+  <img src=".github/assets/banner.png" alt="Stella" width="100%" />
+</p>
 
-`stella-compliance` is an OSS-first compliance CLI for JavaScript and Rust repositories. It discovers projects, generates compliance artifacts, and fails CI when checked-in outputs drift from the current dependency state.
+# @stll/provenance
+
+`provenance` is a CLI that generates SBOMs and third-party notices for JavaScript and Rust repositories, and checks that committed outputs stay current.
 
 ## Scope
 
@@ -11,7 +15,7 @@ The current baseline focuses on:
 - Mixed JS/Rust repositories
 - Optional container image SBOM generation via `syft`
 
-It is designed to stay local-first and Git-native:
+The workflow is file-based:
 
 - one config file
 - deterministic generated outputs
@@ -36,17 +40,17 @@ The CLI itself is a single Rust binary. Analysis still depends on ecosystem tool
 
 You can also point the CLI at explicit binaries:
 
-- `STELLA_COMPLIANCE_CDXGEN=/path/to/cdxgen`
-- `STELLA_COMPLIANCE_SYFT=/path/to/syft`
+- `PROVENANCE_CDXGEN=/path/to/cdxgen`
+- `PROVENANCE_SYFT=/path/to/syft`
 
 ## Commands
 
 ### `init`
 
-Discover JavaScript and Rust projects under the repo root and write `.stella-compliance.yml`.
+Discover JavaScript and Rust projects under the repo root and write `.provenance.yml`.
 
 ```bash
-stella-compliance init
+provenance init
 ```
 
 ### `generate`
@@ -54,7 +58,7 @@ stella-compliance init
 Generate project and container artifacts into the configured output directory.
 
 ```bash
-stella-compliance generate
+provenance generate
 ```
 
 ### `check`
@@ -62,7 +66,7 @@ stella-compliance generate
 Re-generate outputs in a temp directory and fail if the checked-in files are stale.
 
 ```bash
-stella-compliance check
+provenance check
 ```
 
 ### `diff`
@@ -70,14 +74,14 @@ stella-compliance check
 Show the textual diff between checked-in outputs and freshly generated outputs.
 
 ```bash
-stella-compliance diff
+provenance diff
 ```
 
 ## Example config
 
 ```yaml
 version: 1
-output_dir: compliance
+output_dir: provenance
 projects:
   - id: root
     path: .
@@ -93,26 +97,26 @@ containers:
 
 For each project:
 
-- `compliance/projects/<id>/sbom.cdx.json`
-- `compliance/projects/<id>/THIRD-PARTY-NOTICES.txt`
+- `provenance/projects/<id>/sbom.cdx.json`
+- `provenance/projects/<id>/THIRD-PARTY-NOTICES.txt`
 
 For each configured container:
 
-- `compliance/containers/<name>/sbom.cdx.json`
-- `compliance/containers/<name>/THIRD-PARTY-NOTICES.txt`
+- `provenance/containers/<name>/sbom.cdx.json`
+- `provenance/containers/<name>/THIRD-PARTY-NOTICES.txt`
 
 Repo-level outputs:
 
-- `compliance/THIRD-PARTY-NOTICES.repo.txt`
-- `compliance/report.json`
+- `provenance/THIRD-PARTY-NOTICES.repo.txt`
+- `provenance/report.json`
 
 ## CI model
 
 The recommended flow is:
 
-1. run `stella-compliance generate` when dependency inputs change
+1. run `provenance generate` when dependency inputs change
 2. commit the generated outputs
-3. run `stella-compliance check` in CI
+3. run `provenance check` in CI
 
 This repo follows that model directly in GitHub Actions.
 
@@ -122,4 +126,6 @@ This repo follows that model directly in GitHub Actions.
 cargo fmt -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+cargo doc --no-deps
+cargo deny check
 ```
