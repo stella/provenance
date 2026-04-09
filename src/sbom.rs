@@ -9,7 +9,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    config::{ContainerConfig, ProjectConfig},
+    config::{ContainerConfig, Ecosystem, ProjectConfig},
     notice::{DependencyNotice, normalize_licenses},
 };
 
@@ -50,6 +50,19 @@ pub struct LicenseReference {
     pub id: Option<String>,
     #[serde(default)]
     pub name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoMetadata {
+    packages: Vec<CargoPackage>,
+}
+
+#[derive(Debug, Deserialize)]
+struct CargoPackage {
+    name: String,
+    version: String,
+    license: Option<String>,
+    source: Option<String>,
 }
 
 pub fn generate_project_sbom(
@@ -119,7 +132,10 @@ pub fn generate_container_sbom(
     load_sbom(output_path)
 }
 
-pub fn extract_notice_entries(sbom: &SbomDocument) -> Vec<DependencyNotice> {
+pub fn extract_notice_entries(
+    sbom: &SbomDocument,
+    internal_scopes: &[String],
+) -> Vec<DependencyNotice> {
     let mut entries = sbom
         .components
         .iter()
@@ -149,6 +165,10 @@ pub fn extract_notice_entries(sbom: &SbomDocument) -> Vec<DependencyNotice> {
                 _ => component.name.clone(),
             };
 
+            if is_internal_package(&package, internal_scopes) {
+                return None;
+            }
+
             Some(DependencyNotice {
                 package,
                 version: component
@@ -163,6 +183,74 @@ pub fn extract_notice_entries(sbom: &SbomDocument) -> Vec<DependencyNotice> {
     entries.sort();
     entries.dedup();
     entries
+}
+
+pub fn extract_rust_notice_entries(
+    root: &Path,
+    project: &ProjectConfig,
+    internal_scopes: &[String],
+) -> Result<Vec<DependencyNotice>> {
+    if !project.ecosystems.contains(&Ecosystem::Rust) {
+        return Ok(Vec::new());
+    }
+
+    let manifest_path = resolve_project_path(root, &project.path).join("Cargo.toml");
+    if !manifest_path.exists() {
+        return Ok(Vec::new());
+    }
+
+    let output = Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version=1")
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .output()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to run cargo metadata for '{}'", project.id))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(miette!(
+            "cargo metadata for '{}' failed: {}",
+            project.id,
+            stderr.trim()
+        ));
+    }
+
+    let metadata = serde_json::from_slice::<CargoMetadata>(&output.stdout)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to parse cargo metadata for '{}'", project.id))?;
+
+    let mut entries = metadata
+        .packages
+        .into_iter()
+        .filter(|package| package.source.is_some())
+        .filter_map(|package| {
+            let license = package.license.as_deref()?.trim();
+            if license.is_empty() || is_internal_package(&package.name, internal_scopes) {
+                return None;
+            }
+
+            Some(DependencyNotice {
+                package: package.name,
+                version: package.version,
+                licenses: vec![license.to_string()],
+            })
+        })
+        .collect::<Vec<_>>();
+
+    entries.sort();
+    entries.dedup();
+    Ok(entries)
+}
+
+fn is_internal_package(package: &str, internal_scopes: &[String]) -> bool {
+    internal_scopes.iter().any(|scope| {
+        let scope = scope.trim();
+        package == scope
+            || package
+                .strip_prefix(scope)
+                .is_some_and(|suffix| suffix.starts_with('/'))
+    })
 }
 
 fn resolve_project_path(root: &Path, project_path: &Path) -> PathBuf {
@@ -311,9 +399,12 @@ fn remove_object_key(value: &mut Value, path: &[&str]) {
 mod tests {
     use super::{
         Component, ComponentLicense, LicenseReference, SbomDocument, extract_notice_entries,
-        normalize_sbom_value,
+        extract_rust_notice_entries, is_internal_package, normalize_sbom_value,
     };
     use serde_json::json;
+    use tempfile::tempdir;
+
+    use crate::config::{Ecosystem, ProjectConfig};
 
     #[test]
     fn extracts_deduplicated_sorted_notice_entries() {
@@ -353,10 +444,39 @@ mod tests {
             ],
         };
 
-        let entries = extract_notice_entries(&sbom);
+        let entries = extract_notice_entries(&sbom, &[]);
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].package, "@scope/alpha");
         assert_eq!(entries[0].licenses, vec![String::from("MIT")]);
+    }
+
+    #[test]
+    fn filters_internal_scopes_from_notice_entries() {
+        let sbom = SbomDocument {
+            components: vec![Component {
+                group: Some(String::from("@scope")),
+                name: String::from("internal"),
+                version: Some(String::from("1.0.0")),
+                licenses: vec![ComponentLicense {
+                    license: Some(LicenseReference {
+                        id: Some(String::from("MIT")),
+                        name: None,
+                    }),
+                }],
+                kind: Some(String::from("library")),
+            }],
+        };
+
+        let entries = extract_notice_entries(&sbom, &[String::from("@scope")]);
+        assert!(entries.is_empty());
+        assert!(is_internal_package(
+            "@scope/internal",
+            &[String::from("@scope")]
+        ));
+        assert!(!is_internal_package(
+            "@scopeish/internal",
+            &[String::from("@scope")]
+        ));
     }
 
     #[test]
@@ -384,5 +504,18 @@ mod tests {
         assert!(sbom["annotations"][0].get("timestamp").is_none());
         assert_eq!(sbom["metadata"]["component"]["name"], "package");
         assert_eq!(sbom["annotations"][0]["text"], "generated");
+    }
+
+    #[test]
+    fn skips_rust_notice_entries_for_non_rust_projects() {
+        let temp = tempdir().unwrap();
+        let project = ProjectConfig {
+            id: String::from("root"),
+            path: ".".into(),
+            ecosystems: vec![Ecosystem::Javascript],
+        };
+
+        let entries = extract_rust_notice_entries(temp.path(), &project, &[]).unwrap();
+        assert!(entries.is_empty());
     }
 }

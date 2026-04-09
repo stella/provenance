@@ -9,7 +9,10 @@ use serde::Serialize;
 use crate::{
     config::{Config, Ecosystem, resolve_output_dir},
     notice::{DependencyNotice, render_project_notice, render_repo_notice},
-    sbom::{extract_notice_entries, generate_container_sbom, generate_project_sbom},
+    sbom::{
+        extract_notice_entries, extract_rust_notice_entries, generate_container_sbom,
+        generate_project_sbom,
+    },
 };
 
 #[derive(Debug, Serialize)]
@@ -78,7 +81,14 @@ pub fn generate_all(root: &Path, config: &Config, output_path: &Path) -> Result<
         let sbom_path = project_output.join("sbom.cdx.json");
         let notice_path = project_output.join("THIRD-PARTY-NOTICES.txt");
         let sbom = generate_project_sbom(root, project, &sbom_path)?;
-        let entries = extract_notice_entries(&sbom);
+        let mut entries = extract_notice_entries(&sbom, &config.notice.internal_scopes);
+        entries.extend(extract_rust_notice_entries(
+            root,
+            project,
+            &config.notice.internal_scopes,
+        )?);
+        entries.sort();
+        entries.dedup();
         let notice = render_project_notice(&project.id, &entries);
         fs::write(&notice_path, notice)
             .into_diagnostic()
@@ -104,7 +114,7 @@ pub fn generate_all(root: &Path, config: &Config, output_path: &Path) -> Result<
         let sbom_path = container_output.join("sbom.cdx.json");
         let notice_path = container_output.join("THIRD-PARTY-NOTICES.txt");
         let sbom = generate_container_sbom(container, &sbom_path)?;
-        let entries = extract_notice_entries(&sbom);
+        let entries = extract_notice_entries(&sbom, &config.notice.internal_scopes);
         let notice = render_project_notice(&container.name, &entries);
         fs::write(&notice_path, notice)
             .into_diagnostic()

@@ -12,9 +12,23 @@ pub struct Config {
     pub version: u32,
     #[serde(default = "default_output_dir")]
     pub output_dir: PathBuf,
+    #[serde(default, skip_serializing_if = "NoticeConfig::is_default")]
+    pub notice: NoticeConfig,
     pub projects: Vec<ProjectConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub containers: Vec<ContainerConfig>,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct NoticeConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub internal_scopes: Vec<String>,
+}
+
+impl NoticeConfig {
+    pub fn is_default(&self) -> bool {
+        self.internal_scopes.is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -87,6 +101,12 @@ impl Config {
                     "project '{}' must declare at least one ecosystem",
                     project.id
                 ));
+            }
+        }
+
+        for scope in &self.notice.internal_scopes {
+            if scope.trim().is_empty() {
+                return Err(miette!("notice internal scopes cannot be empty"));
             }
         }
 

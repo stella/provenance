@@ -169,6 +169,7 @@ fn generate_creates_outputs_for_projects_and_containers() {
         &temp.path().join("Cargo.toml"),
         "[package]\nname=\"root\"\nversion=\"0.1.0\"\n",
     );
+    write_file(&temp.path().join("src/lib.rs"), "");
     write_file(
         &temp.path().join(".provenance.yml"),
         r"version: 1
