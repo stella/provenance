@@ -6,6 +6,7 @@ use std::{
 
 use miette::{Context, IntoDiagnostic, Result, miette};
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 
 use crate::{
     config::{ContainerConfig, ProjectConfig},
@@ -77,6 +78,7 @@ pub fn generate_project_sbom(
         &format!("cdxgen for project '{}'", project.id),
         Some(output_path),
     )?;
+    normalize_sbom_file(output_path)?;
     load_sbom(output_path)
 }
 
@@ -113,6 +115,7 @@ pub fn generate_container_sbom(
     fs::write(output_path, &output.stdout)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to write {}", output_path.display()))?;
+    normalize_sbom_file(output_path)?;
     load_sbom(output_path)
 }
 
@@ -259,11 +262,58 @@ fn load_sbom(path: &Path) -> Result<SbomDocument> {
         .wrap_err_with(|| format!("failed to parse {}", path.display()))
 }
 
+fn normalize_sbom_file(path: &Path) -> Result<()> {
+    let raw = fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read {}", path.display()))?;
+    let mut value = serde_json::from_str::<Value>(&raw)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
+
+    normalize_sbom_value(&mut value);
+
+    let rendered = serde_json::to_string_pretty(&value)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to render {}", path.display()))?;
+    fs::write(path, format!("{rendered}\n"))
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to write {}", path.display()))
+}
+
+fn normalize_sbom_value(value: &mut Value) {
+    remove_object_key(value, &["serialNumber"]);
+    remove_object_key(value, &["metadata", "timestamp"]);
+
+    if let Some(annotations) = value.get_mut("annotations").and_then(Value::as_array_mut) {
+        for annotation in annotations {
+            remove_object_key(annotation, &["timestamp"]);
+        }
+    }
+}
+
+fn remove_object_key(value: &mut Value, path: &[&str]) {
+    match path {
+        [] => {}
+        [key] => {
+            if let Some(object) = value.as_object_mut() {
+                object.remove(*key);
+            }
+        }
+        [head, tail @ ..] => {
+            if let Some(next) = value.get_mut(*head) {
+                remove_object_key(next, tail);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::{
         Component, ComponentLicense, LicenseReference, SbomDocument, extract_notice_entries,
+        normalize_sbom_value,
     };
+    use serde_json::json;
 
     #[test]
     fn extracts_deduplicated_sorted_notice_entries() {
@@ -307,5 +357,32 @@ mod tests {
         assert_eq!(entries.len(), 1);
         assert_eq!(entries[0].package, "@scope/alpha");
         assert_eq!(entries[0].licenses, vec![String::from("MIT")]);
+    }
+
+    #[test]
+    fn normalizes_volatile_sbom_fields() {
+        let mut sbom = json!({
+            "serialNumber": "urn:uuid:random",
+            "metadata": {
+                "timestamp": "2026-04-09T19:40:46Z",
+                "component": {
+                    "name": "package"
+                }
+            },
+            "annotations": [
+                {
+                    "timestamp": "2026-04-09T19:40:46Z",
+                    "text": "generated"
+                }
+            ]
+        });
+
+        normalize_sbom_value(&mut sbom);
+
+        assert!(sbom.get("serialNumber").is_none());
+        assert!(sbom["metadata"].get("timestamp").is_none());
+        assert!(sbom["annotations"][0].get("timestamp").is_none());
+        assert_eq!(sbom["metadata"]["component"]["name"], "package");
+        assert_eq!(sbom["annotations"][0]["text"], "generated");
     }
 }
