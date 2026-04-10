@@ -9,7 +9,10 @@ use serde::Serialize;
 use crate::{
     config::{Config, Ecosystem, resolve_output_dir},
     notice::{DependencyNotice, render_project_notice, render_repo_notice},
-    sbom::{extract_notice_entries, generate_container_sbom, generate_project_sbom},
+    sbom::{
+        extract_notice_entries, extract_rust_notice_entries, generate_container_sbom,
+        generate_project_sbom,
+    },
 };
 
 #[derive(Debug, Serialize)]
@@ -46,7 +49,8 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, output_dir: Option<PathB
         .wrap_err_with(|| format!("failed to resolve {}", root.display()))?;
     let config = Config::load(&root, config_path.as_deref())?;
     let output_path = resolve_output_dir(&root, &config, output_dir.as_deref());
-    let report = generate_all(&root, &config, &output_path)?;
+    let report_output_dir = display_relative(&root, &output_path);
+    let report = generate_all(&root, &config, &output_path, &report_output_dir)?;
 
     println!(
         "Generated {} project(s) and {} container(s) into {}",
@@ -57,13 +61,18 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, output_dir: Option<PathB
     Ok(())
 }
 
-pub fn generate_all(root: &Path, config: &Config, output_path: &Path) -> Result<ComplianceReport> {
+pub fn generate_all(
+    root: &Path,
+    config: &Config,
+    output_path: &Path,
+    report_output_dir: &str,
+) -> Result<ComplianceReport> {
     config.validate()?;
     prepare_output_dir(output_path)?;
 
     let mut report = ComplianceReport {
         version: 1,
-        output_dir: String::from("."),
+        output_dir: report_output_dir.to_string(),
         projects: Vec::new(),
         containers: Vec::new(),
     };
@@ -78,7 +87,14 @@ pub fn generate_all(root: &Path, config: &Config, output_path: &Path) -> Result<
         let sbom_path = project_output.join("sbom.cdx.json");
         let notice_path = project_output.join("THIRD-PARTY-NOTICES.txt");
         let sbom = generate_project_sbom(root, project, &sbom_path)?;
-        let entries = extract_notice_entries(&sbom);
+        let mut entries = extract_notice_entries(&sbom, &config.notice.internal_scopes);
+        entries.extend(extract_rust_notice_entries(
+            root,
+            project,
+            &config.notice.internal_scopes,
+        )?);
+        entries.sort();
+        entries.dedup();
         let notice = render_project_notice(&project.id, &entries);
         fs::write(&notice_path, notice)
             .into_diagnostic()
@@ -104,7 +120,7 @@ pub fn generate_all(root: &Path, config: &Config, output_path: &Path) -> Result<
         let sbom_path = container_output.join("sbom.cdx.json");
         let notice_path = container_output.join("THIRD-PARTY-NOTICES.txt");
         let sbom = generate_container_sbom(container, &sbom_path)?;
-        let entries = extract_notice_entries(&sbom);
+        let entries = extract_notice_entries(&sbom, &config.notice.internal_scopes);
         let notice = render_project_notice(&container.name, &entries);
         fs::write(&notice_path, notice)
             .into_diagnostic()
@@ -163,7 +179,7 @@ fn prepare_output_dir(output_path: &Path) -> Result<()> {
     Ok(())
 }
 
-fn display_relative(root: &Path, path: &Path) -> String {
+pub(crate) fn display_relative(root: &Path, path: &Path) -> String {
     path.strip_prefix(root)
         .unwrap_or(path)
         .display()
