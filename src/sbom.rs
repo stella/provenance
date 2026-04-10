@@ -79,6 +79,9 @@ pub fn generate_project_sbom(
     }
     command
         .arg("--no-install-deps")
+        // Source SBOMs should come from manifests and lockfiles, not from local node_modules state.
+        .arg("--exclude-regex")
+        .arg("node_modules/**")
         .arg("--required-only")
         .arg("--json-pretty")
         .arg("-o")

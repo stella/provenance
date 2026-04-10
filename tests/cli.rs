@@ -79,7 +79,7 @@ fn write_cdxgen_stub(dir: &Path) -> PathBuf {
         dir,
         "cdxgen-stub.sh",
         &format!(
-            "#!/bin/sh\nset -eu\nout=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then\n    out=\"$2\"\n    shift 2\n    continue\n  fi\n  shift\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncat <<'JSON' > \"$out\"\n{}\nJSON\n",
+            "#!/bin/sh\nset -eu\nif [ -n \"${{PROVENANCE_CDXGEN_LOG:-}}\" ]; then\n  printf '%s\\n' \"$@\" > \"$PROVENANCE_CDXGEN_LOG\"\nfi\nout=\"\"\nwhile [ \"$#\" -gt 0 ]; do\n  if [ \"$1\" = \"-o\" ]; then\n    out=\"$2\"\n    shift 2\n    continue\n  fi\n  shift\ndone\nmkdir -p \"$(dirname \"$out\")\"\ncat <<'JSON' > \"$out\"\n{}\nJSON\n",
             project_sbom_json()
         ),
     )
@@ -219,6 +219,41 @@ containers:
     assert!(report.contains("\"output_dir\": \"provenance\""));
     assert!(report.contains("\"id\": \"root\""));
     assert!(report.contains("\"name\": \"stella-core\""));
+}
+
+#[test]
+fn generate_invokes_cdxgen_with_manifest_focused_flags() {
+    let temp = TempDir::new().unwrap();
+    let stubs = TempDir::new().unwrap();
+    let cdxgen = write_cdxgen_stub(stubs.path());
+    let cdxgen_log = temp.path().join("cdxgen-args.log");
+
+    write_file(&temp.path().join("package.json"), r#"{"name":"root"}"#);
+    write_file(
+        &temp.path().join(".provenance.yml"),
+        r"version: 1
+output_dir: provenance
+projects:
+  - id: root
+    path: .
+    ecosystems:
+      - javascript
+      - rust
+",
+    );
+
+    cargo_bin()
+        .current_dir(temp.path())
+        .env("PROVENANCE_CDXGEN", &cdxgen)
+        .env("PROVENANCE_CDXGEN_LOG", &cdxgen_log)
+        .arg("generate")
+        .assert()
+        .success();
+
+    let log = fs::read_to_string(cdxgen_log).unwrap();
+    assert!(log.contains("--no-install-deps"));
+    assert!(log.contains("--exclude-regex"));
+    assert!(log.contains("node_modules/**"));
 }
 
 #[test]
