@@ -1,0 +1,54 @@
+[package]
+name = "provenance"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.85"
+description = "Generate SBOMs and third-party notices for JavaScript and Rust repositories"
+license = "MIT"
+repository = "https://github.com/stella/provenance"
+homepage = "https://github.com/stella/provenance"
+keywords = ["provenance", "sbom", "licenses", "javascript", "rust"]
+categories = ["command-line-utilities", "development-tools"]
+
+[lints.clippy]
+cast_lossless = "warn"
+doc_link_with_quotes = "warn"
+filter_map_next = "warn"
+flat_map_option = "warn"
+implicit_clone = "warn"
+inefficient_to_string = "warn"
+manual_is_variant_and = "warn"
+manual_let_else = "warn"
+match_wildcard_for_single_variants = "warn"
+needless_continue = "warn"
+needless_pass_by_ref_mut = "warn"
+needless_raw_string_hashes = "warn"
+ptr_as_ptr = "warn"
+uninlined_format_args = "warn"
+unnecessary_wraps = "warn"
+unused_async = "warn"
+unused_self = "warn"
+used_underscore_binding = "warn"
+
+[lints.rust]
+unsafe_code = "warn"
+
+[lints.rustdoc]
+private_intra_doc_links = "allow"
+
+[dependencies]
+clap = { version = "4.5.39", features = ["derive"] }
+ignore = "0.4.24"
+miette = { version = "7.6.0", features = ["fancy"] }
+serde = { version = "1.0.228", features = ["derive"] }
+serde_json = "1.0.145"
+serde_yaml = "0.9.34"
+similar = "2.7.0"
+tempfile = "3.20.0"
+toml = "0.8.23"
+which = "7.0.3"
+
+[dev-dependencies]
+assert_cmd = "2.0.17"
+assert_fs = "1.1.3"
+predicates = "3.1.3"
