@@ -253,7 +253,7 @@ projects:
     let log = fs::read_to_string(cdxgen_log).unwrap();
     assert!(log.contains("--no-install-deps"));
     assert!(log.contains("--exclude-regex"));
-    assert!(log.contains("node_modules/**"));
+    assert!(log.contains("(^|/)node_modules(/.*)?$"));
 }
 
 #[test]
