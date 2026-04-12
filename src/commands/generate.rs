@@ -70,6 +70,7 @@ pub fn generate_all(
 ) -> Result<ComplianceReport> {
     config.validate()?;
     prepare_output_dir(output_path)?;
+    let flatten_single_project = should_flatten_single_project(config);
 
     let mut report = ComplianceReport {
         version: 1,
@@ -80,7 +81,7 @@ pub fn generate_all(
     let mut repo_sections = Vec::<(String, Vec<DependencyNotice>)>::new();
 
     for project in &config.projects {
-        let project_output = output_path.join("projects").join(&project.id);
+        let project_output = project_output_dir(output_path, &project.id, flatten_single_project);
         fs::create_dir_all(&project_output)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to create {}", project_output.display()))?;
@@ -137,11 +138,13 @@ pub fn generate_all(
         });
     }
 
-    let repo_notice_path = output_path.join("THIRD-PARTY-NOTICES.repo.txt");
-    let repo_notice = render_repo_notice(&repo_sections);
-    fs::write(&repo_notice_path, repo_notice)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("failed to write {}", repo_notice_path.display()))?;
+    if should_write_repo_notice(config) {
+        let repo_notice_path = output_path.join("THIRD-PARTY-NOTICES.repo.txt");
+        let repo_notice = render_repo_notice(&repo_sections);
+        fs::write(&repo_notice_path, repo_notice)
+            .into_diagnostic()
+            .wrap_err_with(|| format!("failed to write {}", repo_notice_path.display()))?;
+    }
 
     let report_path = output_path.join("report.json");
     let report_json = serde_json::to_string_pretty(&report)
@@ -168,7 +171,12 @@ fn prepare_output_dir(output_path: &Path) -> Result<()> {
         }
     }
 
-    for managed_file in ["THIRD-PARTY-NOTICES.repo.txt", "report.json"] {
+    for managed_file in [
+        "sbom.cdx.json",
+        "THIRD-PARTY-NOTICES.txt",
+        "THIRD-PARTY-NOTICES.repo.txt",
+        "report.json",
+    ] {
         let path = output_path.join(managed_file);
         if path.exists() {
             fs::remove_file(&path)
@@ -199,4 +207,24 @@ pub(crate) fn ensure_safe_output_dir(root: &Path, output_path: &Path) -> Result<
 
 fn normalize_path(path: &Path) -> PathBuf {
     path.components().collect()
+}
+
+fn should_flatten_single_project(config: &Config) -> bool {
+    config.projects.len() == 1
+}
+
+fn should_write_repo_notice(config: &Config) -> bool {
+    config.projects.len() + config.containers.len() > 1
+}
+
+fn project_output_dir(
+    output_path: &Path,
+    project_id: &str,
+    flatten_single_project: bool,
+) -> PathBuf {
+    if flatten_single_project {
+        output_path.to_path_buf()
+    } else {
+        output_path.join("projects").join(project_id)
+    }
 }

@@ -107,7 +107,12 @@ containers:
 
 ## Generated outputs
 
-For each project:
+For a single-project repo:
+
+- `provenance/sbom.cdx.json`
+- `provenance/THIRD-PARTY-NOTICES.txt`
+
+For multi-project repos:
 
 - `provenance/projects/<id>/sbom.cdx.json`
 - `provenance/projects/<id>/THIRD-PARTY-NOTICES.txt`
@@ -119,8 +124,11 @@ For each configured container:
 
 Repo-level outputs:
 
-- `provenance/THIRD-PARTY-NOTICES.repo.txt`
 - `provenance/report.json`
+
+When there is more than one project or any configured containers:
+
+- `provenance/THIRD-PARTY-NOTICES.repo.txt`
 
 ## CI model
 
