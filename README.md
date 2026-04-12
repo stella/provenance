@@ -36,13 +36,17 @@ The workflow is file-based:
 
 ## Installation
 
-### Build from source
+```bash
+cargo install --git https://github.com/stella/provenance --locked
+```
+
+For local development:
 
 ```bash
 cargo install --path .
 ```
 
-### Runtime prerequisites
+## Runtime prerequisites
 
 The CLI itself is a single Rust binary. Analysis still depends on ecosystem tooling:
 
@@ -55,54 +59,24 @@ You can also point the CLI at explicit binaries:
 - `PROVENANCE_CDXGEN=/path/to/cdxgen`
 - `PROVENANCE_SYFT=/path/to/syft`
 
-## Commands
-
-### `init`
-
-Discover JavaScript and Rust projects under the repo root and write `.provenance.yml`.
+## Quick Start
 
 ```bash
 provenance init
-```
-
-### `generate`
-
-Generate project and container artifacts into the configured output directory.
-
-```bash
 provenance generate
 ```
 
-### `check`
+`provenance init` discovers JavaScript and Rust projects under the current root
+and writes `.provenance.yml`.
 
-Re-generate outputs in a temp directory and fail if the checked-in files are stale.
+`provenance generate` writes deterministic compliance artifacts into the
+configured output directory.
+
+For ongoing verification:
 
 ```bash
 provenance check
-```
-
-### `diff`
-
-Show the textual diff between checked-in outputs and freshly generated outputs.
-
-```bash
 provenance diff
-```
-
-## Example config
-
-```yaml
-version: 1
-output_dir: provenance
-projects:
-  - id: root
-    path: .
-    ecosystems:
-      - javascript
-      - rust
-containers:
-  - name: stella-core
-    image: ghcr.io/stella/core:latest
 ```
 
 ## Generated outputs
