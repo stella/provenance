@@ -106,7 +106,6 @@ pub fn generate_container_sbom(
     let mut command = Command::new(&command_spec.program);
     command.args(&command_spec.prefix_args);
     command
-        .arg("scan")
         .arg(&container.image)
         .arg("-o")
         .arg("cyclonedx-json");

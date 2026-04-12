@@ -120,6 +120,7 @@ This repo follows that model directly in GitHub Actions.
 cargo fmt -- --check
 cargo clippy --all-targets --all-features -- -D warnings
 cargo test
+cargo test --test integration_real -- --ignored
 cargo doc --no-deps
 cargo deny check
 cargo package --locked

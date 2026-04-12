@@ -42,3 +42,23 @@ jobs:
         run: |
           cargo install cargo-deny --locked
           cargo deny check
+
+  integration-real:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+
+      - uses: oven-sh/setup-bun@v2
+
+      - id: syft
+        uses: anchore/sbom-action/download-syft@v0
+
+      - name: Real tool integration tests
+        run: cargo test --test integration_real -- --ignored
+        env:
+          PROVENANCE_SYFT: ${{ steps.syft.outputs.cmd }}
