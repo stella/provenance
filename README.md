@@ -36,6 +36,19 @@ The workflow is file-based:
 
 ## Installation
 
+Download a pinned binary from GitHub Releases for CI and automation.
+
+Example for Linux x64:
+
+```bash
+curl -fsSL -o /tmp/provenance.tar.gz \
+  https://github.com/stella/provenance/releases/download/v0.1.0/provenance-v0.1.0-x86_64-unknown-linux-gnu.tar.gz
+tar -xzf /tmp/provenance.tar.gz -C /tmp
+install /tmp/provenance-v0.1.0-x86_64-unknown-linux-gnu/provenance ~/.local/bin/provenance
+```
+
+To build or install from source instead:
+
 ```bash
 cargo install --git https://github.com/stella/provenance --locked
 ```

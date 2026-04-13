@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -40,15 +41,17 @@ pub struct Component {
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ComponentLicense {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub license: Option<LicenseReference>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expression: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct LicenseReference {
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub id: Option<String>,
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
 }
 
@@ -95,6 +98,7 @@ pub fn generate_project_sbom(
         Some(output_path),
     )?;
     normalize_sbom_file(output_path)?;
+    enrich_rust_component_licenses(root, project, output_path)?;
     load_sbom(output_path)
 }
 
@@ -147,13 +151,16 @@ pub fn extract_notice_entries(
                 component
                     .licenses
                     .iter()
-                    .filter_map(|entry| entry.license.as_ref())
-                    .filter_map(|license| {
-                        license
-                            .id
-                            .as_ref()
-                            .or(license.name.as_ref())
-                            .map(ToString::to_string)
+                    .filter_map(|entry| {
+                        entry.expression.clone().or_else(|| {
+                            entry.license.as_ref().and_then(|license| {
+                                license
+                                    .id
+                                    .as_ref()
+                                    .or(license.name.as_ref())
+                                    .map(ToString::to_string)
+                            })
+                        })
                     })
                     .collect(),
             );
@@ -192,40 +199,9 @@ pub fn extract_rust_notice_entries(
     project: &ProjectConfig,
     internal_scopes: &[String],
 ) -> Result<Vec<DependencyNotice>> {
-    if !project.ecosystems.contains(&Ecosystem::Rust) {
+    let Some(metadata) = load_cargo_metadata(root, project)? else {
         return Ok(Vec::new());
-    }
-
-    let project_root = resolve_project_path(root, &project.path);
-    let manifest_path = project_root.join("Cargo.toml");
-    if !manifest_path.exists() {
-        return Ok(Vec::new());
-    }
-    if !project_root.join("Cargo.lock").exists() {
-        return Ok(Vec::new());
-    }
-
-    let output = Command::new("cargo")
-        .arg("metadata")
-        .arg("--format-version=1")
-        .arg("--locked")
-        .arg("--manifest-path")
-        .arg(&manifest_path)
-        .output()
-        .into_diagnostic()
-        .wrap_err_with(|| format!("failed to run cargo metadata for '{}'", project.id))?;
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        return Err(miette!(
-            "cargo metadata for '{}' failed: {}",
-            project.id,
-            stderr.trim()
-        ));
-    }
-
-    let metadata = serde_json::from_slice::<CargoMetadata>(&output.stdout)
-        .into_diagnostic()
-        .wrap_err_with(|| format!("failed to parse cargo metadata for '{}'", project.id))?;
+    };
 
     let mut entries = metadata
         .packages
@@ -258,6 +234,154 @@ fn is_internal_package(package: &str, internal_scopes: &[String]) -> bool {
                 .strip_prefix(scope)
                 .is_some_and(|suffix| suffix.starts_with('/'))
     })
+}
+
+fn enrich_rust_component_licenses(
+    root: &Path,
+    project: &ProjectConfig,
+    output_path: &Path,
+) -> Result<()> {
+    let Some(metadata) = load_cargo_metadata(root, project)? else {
+        return Ok(());
+    };
+
+    let license_map = cargo_license_map(&metadata);
+    if license_map.is_empty() {
+        return Ok(());
+    }
+
+    let raw = fs::read_to_string(output_path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read {}", output_path.display()))?;
+    let mut value = serde_json::from_str::<Value>(&raw)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to parse {}", output_path.display()))?;
+
+    apply_cargo_license_metadata(&mut value, &license_map);
+
+    let rendered = serde_json::to_string_pretty(&value)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to render {}", output_path.display()))?;
+    fs::write(output_path, format!("{rendered}\n"))
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to write {}", output_path.display()))
+}
+
+fn load_cargo_metadata(root: &Path, project: &ProjectConfig) -> Result<Option<CargoMetadata>> {
+    if !project.ecosystems.contains(&Ecosystem::Rust) {
+        return Ok(None);
+    }
+
+    let project_root = resolve_project_path(root, &project.path);
+    let manifest_path = project_root.join("Cargo.toml");
+    if !manifest_path.exists() || !project_root.join("Cargo.lock").exists() {
+        return Ok(None);
+    }
+
+    let output = Command::new("cargo")
+        .arg("metadata")
+        .arg("--format-version=1")
+        .arg("--locked")
+        .arg("--manifest-path")
+        .arg(&manifest_path)
+        .output()
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to run cargo metadata for '{}'", project.id))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        return Err(miette!(
+            "cargo metadata for '{}' failed: {}",
+            project.id,
+            stderr.trim()
+        ));
+    }
+
+    let metadata = serde_json::from_slice::<CargoMetadata>(&output.stdout)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to parse cargo metadata for '{}'", project.id))?;
+    Ok(Some(metadata))
+}
+
+fn cargo_license_map(metadata: &CargoMetadata) -> BTreeMap<String, Vec<ComponentLicense>> {
+    metadata
+        .packages
+        .iter()
+        .filter(|package| package.source.is_some())
+        .filter_map(|package| {
+            let license = package.license.as_deref()?.trim();
+            if license.is_empty() {
+                return None;
+            }
+
+            Some((
+                format!("pkg:cargo/{}@{}", package.name, package.version),
+                component_licenses_from_cargo(license),
+            ))
+        })
+        .collect()
+}
+
+fn component_licenses_from_cargo(license: &str) -> Vec<ComponentLicense> {
+    normalize_cargo_license(license)
+        .into_iter()
+        .map(|value| {
+            if looks_like_license_expression(&value) {
+                ComponentLicense {
+                    license: None,
+                    expression: Some(value),
+                }
+            } else {
+                ComponentLicense {
+                    license: Some(LicenseReference {
+                        id: Some(value),
+                        name: None,
+                    }),
+                    expression: None,
+                }
+            }
+        })
+        .collect()
+}
+
+fn looks_like_license_expression(license: &str) -> bool {
+    license.contains(" AND ")
+        || license.contains(" OR ")
+        || license.contains(" WITH ")
+        || license.contains('(')
+        || license.contains(')')
+}
+
+fn apply_cargo_license_metadata(
+    value: &mut Value,
+    license_map: &BTreeMap<String, Vec<ComponentLicense>>,
+) {
+    let Some(components) = value.get_mut("components").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    for component in components {
+        let Some(object) = component.as_object_mut() else {
+            continue;
+        };
+        let Some(purl) = object.get("purl").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(licenses) = license_map.get(purl) else {
+            continue;
+        };
+
+        let has_licenses = object
+            .get("licenses")
+            .and_then(Value::as_array)
+            .is_some_and(|entries| !entries.is_empty());
+        if has_licenses {
+            continue;
+        }
+
+        if let Ok(serialized) = serde_json::to_value(licenses) {
+            object.insert(String::from("licenses"), serialized);
+        }
+    }
 }
 
 fn normalize_cargo_license(license: &str) -> Vec<String> {
@@ -448,7 +572,8 @@ mod tests {
     use std::fs;
 
     use super::{
-        Component, ComponentLicense, LicenseReference, SbomDocument, extract_notice_entries,
+        CargoMetadata, CargoPackage, Component, ComponentLicense, LicenseReference, SbomDocument,
+        apply_cargo_license_metadata, cargo_license_map, extract_notice_entries,
         extract_rust_notice_entries, is_internal_package, normalize_cargo_license,
         normalize_sbom_value,
     };
@@ -477,6 +602,7 @@ mod tests {
                             id: Some(String::from("MIT")),
                             name: None,
                         }),
+                        expression: None,
                     }],
                     kind: Some(String::from("library")),
                 },
@@ -489,6 +615,7 @@ mod tests {
                             id: None,
                             name: Some(String::from("MIT")),
                         }),
+                        expression: None,
                     }],
                     kind: Some(String::from("library")),
                 },
@@ -513,6 +640,7 @@ mod tests {
                         id: Some(String::from("MIT")),
                         name: None,
                     }),
+                    expression: None,
                 }],
                 kind: Some(String::from("library")),
             }],
@@ -581,6 +709,77 @@ mod tests {
         assert_eq!(
             normalize_cargo_license("(MIT OR Apache-2.0) AND Unicode-3.0"),
             vec![String::from("(MIT OR Apache-2.0) AND Unicode-3.0")]
+        );
+    }
+
+    #[test]
+    fn applies_cargo_component_licenses_to_sbom() {
+        let metadata = CargoMetadata {
+            packages: vec![
+                CargoPackage {
+                    name: String::from("bit-vec"),
+                    version: String::from("0.8.0"),
+                    license: Some(String::from("MIT OR Apache-2.0")),
+                    source: Some(String::from(
+                        "registry+https://github.com/rust-lang/crates.io-index",
+                    )),
+                },
+                CargoPackage {
+                    name: String::from("unicode-ident"),
+                    version: String::from("1.0.24"),
+                    license: Some(String::from("(MIT OR Apache-2.0) AND Unicode-3.0")),
+                    source: Some(String::from(
+                        "registry+https://github.com/rust-lang/crates.io-index",
+                    )),
+                },
+            ],
+        };
+        let license_map = cargo_license_map(&metadata);
+
+        let mut sbom = json!({
+            "components": [
+                {
+                    "name": "bit-vec",
+                    "version": "0.8.0",
+                    "purl": "pkg:cargo/bit-vec@0.8.0",
+                    "type": "library"
+                },
+                {
+                    "name": "unicode-ident",
+                    "version": "1.0.24",
+                    "purl": "pkg:cargo/unicode-ident@1.0.24",
+                    "type": "library"
+                },
+                {
+                    "name": "existing",
+                    "version": "1.0.0",
+                    "purl": "pkg:cargo/existing@1.0.0",
+                    "type": "library",
+                    "licenses": [
+                        {
+                            "license": {
+                                "id": "BSD-3-Clause"
+                            }
+                        }
+                    ]
+                }
+            ]
+        });
+
+        apply_cargo_license_metadata(&mut sbom, &license_map);
+
+        assert_eq!(
+            sbom["components"][0]["licenses"][0]["license"]["id"],
+            "Apache-2.0"
+        );
+        assert_eq!(sbom["components"][0]["licenses"][1]["license"]["id"], "MIT");
+        assert_eq!(
+            sbom["components"][1]["licenses"][0]["expression"],
+            "(MIT OR Apache-2.0) AND Unicode-3.0"
+        );
+        assert_eq!(
+            sbom["components"][2]["licenses"][0]["license"]["id"],
+            "BSD-3-Clause"
         );
     }
 
