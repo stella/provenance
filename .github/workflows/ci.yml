@@ -53,7 +53,12 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
 
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 22
+
+      - name: Install cdxgen
+        run: npm install -g @cyclonedx/cdxgen@12.1.5
 
       - id: syft
         uses: anchore/sbom-action/download-syft@v0

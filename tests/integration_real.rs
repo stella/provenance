@@ -19,8 +19,13 @@ fn write_file(path: &Path, contents: &str) {
     fs::write(path, contents).unwrap();
 }
 
-fn write_bunx_cdxgen_wrapper(dir: &Path) -> PathBuf {
-    let bunx = which::which("bunx").expect("bunx is required for the real cdxgen integration test");
+fn resolve_real_cdxgen(dir: &Path) -> PathBuf {
+    if let Ok(path) = which::which("cdxgen") {
+        return path;
+    }
+
+    let bunx =
+        which::which("bunx").expect("either cdxgen or bunx is required for the real cdxgen test");
     let path = dir.join("cdxgen-real.sh");
     let script = format!(
         "#!/bin/sh\nset -eu\nexec \"{}\" @cyclonedx/cdxgen \"$@\"\n",
@@ -70,7 +75,7 @@ fn parse_json(path: &Path) -> Value {
 }
 
 #[test]
-#[ignore = "requires bunx and network access for a real cdxgen invocation"]
+#[ignore = "requires cdxgen or bunx and network access for a real cdxgen invocation"]
 fn generate_with_real_cdxgen_for_rust_project() {
     let temp = TempDir::new().unwrap();
     let helpers = TempDir::new().unwrap();
@@ -87,7 +92,7 @@ projects:
 ",
     );
 
-    let cdxgen = write_bunx_cdxgen_wrapper(helpers.path());
+    let cdxgen = resolve_real_cdxgen(helpers.path());
 
     cargo_bin()
         .current_dir(temp.path())
@@ -122,7 +127,7 @@ projects:
 }
 
 #[test]
-#[ignore = "requires bunx, syft, and network access for real tool invocations"]
+#[ignore = "requires cdxgen or bunx, syft, and network access for real tool invocations"]
 fn generate_with_real_cdxgen_and_syft() {
     let temp = TempDir::new().unwrap();
     let helpers = TempDir::new().unwrap();
@@ -135,7 +140,7 @@ fn generate_with_real_cdxgen_and_syft() {
         ),
     );
 
-    let cdxgen = write_bunx_cdxgen_wrapper(helpers.path());
+    let cdxgen = resolve_real_cdxgen(helpers.path());
     let syft = which::which("syft").expect("syft is required for the real syft integration test");
 
     cargo_bin()
