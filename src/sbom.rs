@@ -398,6 +398,33 @@ fn normalize_sbom_value(value: &mut Value) {
     remove_object_key(value, &["serialNumber"]);
     remove_object_key(value, &["metadata", "timestamp"]);
     remove_object_key(value, &["annotations"]);
+    normalize_hash_algorithms(value);
+}
+
+fn normalize_hash_algorithms(value: &mut Value) {
+    match value {
+        Value::Object(object) => {
+            let digest_len = object.get("content").and_then(Value::as_str).map(str::len);
+
+            if digest_len == Some(64) {
+                if let Some(Value::String(algorithm)) = object.get_mut("alg") {
+                    if algorithm == "SHA-384" {
+                        *algorithm = String::from("SHA-256");
+                    }
+                }
+            }
+
+            for child in object.values_mut() {
+                normalize_hash_algorithms(child);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                normalize_hash_algorithms(item);
+            }
+        }
+        _ => {}
+    }
 }
 
 fn remove_object_key(value: &mut Value, path: &[&str]) {
@@ -518,6 +545,17 @@ mod tests {
                     "timestamp": "2026-04-09T19:40:46Z",
                     "text": "generated"
                 }
+            ],
+            "components": [
+                {
+                    "name": "aho-corasick",
+                    "hashes": [
+                        {
+                            "alg": "SHA-384",
+                            "content": "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+                        }
+                    ]
+                }
             ]
         });
 
@@ -527,6 +565,11 @@ mod tests {
         assert!(sbom["metadata"].get("timestamp").is_none());
         assert!(sbom.get("annotations").is_none());
         assert_eq!(sbom["metadata"]["component"]["name"], "package");
+        assert_eq!(sbom["components"][0]["hashes"][0]["alg"], "SHA-256");
+        assert_eq!(
+            sbom["components"][0]["hashes"][0]["content"],
+            "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
+        );
     }
 
     #[test]
