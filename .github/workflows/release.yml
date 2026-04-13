@@ -4,12 +4,20 @@ on:
   push:
     tags:
       - "v*"
+  workflow_dispatch:
+    inputs:
+      release-tag:
+        description: "Existing tag to publish, for example v0.1.0"
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 env:
   CARGO_INCREMENTAL: 0
+  FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
+  RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release-tag || github.ref_name }}
 
 jobs:
   build:
@@ -52,7 +60,7 @@ jobs:
         env:
           ARCHIVE_EXT: ${{ matrix.archive_ext }}
           TARGET: ${{ matrix.target }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
           artifact_dir="dist/provenance-${VERSION}-${TARGET}"
@@ -67,7 +75,7 @@ jobs:
         shell: pwsh
         env:
           TARGET: ${{ matrix.target }}
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
         run: |
           $artifactDir = "dist/provenance-$env:VERSION-$env:TARGET"
           New-Item -ItemType Directory -Force -Path $artifactDir | Out-Null
@@ -77,10 +85,10 @@ jobs:
           Compress-Archive -Path "$artifactDir/*" -DestinationPath "dist/provenance-$env:VERSION-$env:TARGET.zip"
           Remove-Item -Recurse -Force $artifactDir
 
-      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+      - uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
         with:
           name: provenance-${{ matrix.target }}
-          path: dist/provenance-${{ github.ref_name }}-${{ matrix.target }}.${{ matrix.archive_ext }}
+          path: dist/provenance-${{ env.RELEASE_TAG }}-${{ matrix.target }}.${{ matrix.archive_ext }}
           if-no-files-found: error
 
   publish:
@@ -88,7 +96,7 @@ jobs:
     runs-on: ubuntu-latest
     needs: [build]
     steps:
-      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+      - uses: actions/download-artifact@634f93cb2916e3fdff6788551b99b062d0335ce0 # v5
         with:
           path: dist
           merge-multiple: true
@@ -96,7 +104,7 @@ jobs:
       - name: Generate checksums
         shell: bash
         env:
-          VERSION: ${{ github.ref_name }}
+          VERSION: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
           cd dist
@@ -106,11 +114,12 @@ jobs:
         shell: bash
         env:
           GH_TOKEN: ${{ github.token }}
-          TAG: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          TAG: ${{ env.RELEASE_TAG }}
         run: |
           set -euo pipefail
-          if gh release view "$TAG" >/dev/null 2>&1; then
-            gh release upload "$TAG" dist/* --clobber
+          if gh release view "$TAG" --repo "$REPOSITORY" >/dev/null 2>&1; then
+            gh release upload "$TAG" dist/* --clobber --repo "$REPOSITORY"
           else
-            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag
+            gh release create "$TAG" dist/* --title "$TAG" --generate-notes --verify-tag --repo "$REPOSITORY"
           fi
