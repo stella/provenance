@@ -31,6 +31,8 @@ The workflow is file-based:
   some licenses may require additional attribution text at distribution time.
 - The safest canonical outputs come from a controlled CI or release environment,
   especially when your dependency graph includes platform-specific packages.
+- `notice.internal_scopes` can be used to exclude first-party scoped packages
+  from generated notices and repo SBOM component inventories.
 - `output_dir` must point to a dedicated directory such as `provenance`; the
   tool refuses to write managed outputs directly into the repository root.
 

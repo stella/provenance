@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     env, fs,
     path::{Path, PathBuf},
     process::Command,
@@ -72,6 +72,7 @@ pub fn generate_project_sbom(
     root: &Path,
     project: &ProjectConfig,
     output_path: &Path,
+    internal_scopes: &[String],
 ) -> Result<SbomDocument> {
     let project_dir = resolve_project_path(root, &project.path);
     let command_spec = resolve_cdxgen()?;
@@ -97,8 +98,9 @@ pub fn generate_project_sbom(
         &format!("cdxgen for project '{}'", project.id),
         Some(output_path),
     )?;
-    normalize_sbom_file(output_path)?;
+    normalize_sbom_file(output_path, internal_scopes)?;
     enrich_rust_component_licenses(root, project, output_path)?;
+    normalize_sbom_file(output_path, internal_scopes)?;
     load_sbom(output_path)
 }
 
@@ -134,7 +136,7 @@ pub fn generate_container_sbom(
     fs::write(output_path, &output.stdout)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to write {}", output_path.display()))?;
-    normalize_sbom_file(output_path)?;
+    normalize_sbom_file(output_path, &[])?;
     load_sbom(output_path)
 }
 
@@ -500,7 +502,7 @@ fn load_sbom(path: &Path) -> Result<SbomDocument> {
         .wrap_err_with(|| format!("failed to parse {}", path.display()))
 }
 
-fn normalize_sbom_file(path: &Path) -> Result<()> {
+fn normalize_sbom_file(path: &Path, internal_scopes: &[String]) -> Result<()> {
     let raw = fs::read_to_string(path)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to read {}", path.display()))?;
@@ -508,7 +510,7 @@ fn normalize_sbom_file(path: &Path) -> Result<()> {
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
 
-    normalize_sbom_value(&mut value);
+    normalize_sbom_value(&mut value, internal_scopes);
 
     let rendered = serde_json::to_string_pretty(&value)
         .into_diagnostic()
@@ -518,11 +520,103 @@ fn normalize_sbom_file(path: &Path) -> Result<()> {
         .wrap_err_with(|| format!("failed to write {}", path.display()))
 }
 
-fn normalize_sbom_value(value: &mut Value) {
+fn normalize_sbom_value(value: &mut Value, internal_scopes: &[String]) {
     remove_object_key(value, &["serialNumber"]);
     remove_object_key(value, &["metadata", "timestamp"]);
     remove_object_key(value, &["annotations"]);
     normalize_hash_algorithms(value);
+    remove_cdx_bom_metadata_properties(value);
+    remove_internal_components(value, internal_scopes);
+}
+
+fn remove_cdx_bom_metadata_properties(value: &mut Value) {
+    let Some(properties) = value
+        .get_mut("metadata")
+        .and_then(|metadata| metadata.get_mut("properties"))
+        .and_then(Value::as_array_mut)
+    else {
+        return;
+    };
+
+    properties.retain(|property| {
+        property
+            .get("name")
+            .and_then(Value::as_str)
+            .is_none_or(|name| !name.starts_with("cdx:bom:"))
+    });
+
+    if properties.is_empty() {
+        remove_object_key(value, &["metadata", "properties"]);
+    }
+}
+
+fn remove_internal_components(value: &mut Value, internal_scopes: &[String]) {
+    if internal_scopes.is_empty() {
+        return;
+    }
+
+    let Some(components) = value.get_mut("components").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    let mut removed_refs = BTreeSet::new();
+    components.retain(|component| {
+        let Some(object) = component.as_object() else {
+            return true;
+        };
+
+        let kind = object.get("type").and_then(Value::as_str);
+        if kind == Some("application") {
+            return true;
+        }
+
+        let name = object
+            .get("name")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        let package = match object.get("group").and_then(Value::as_str) {
+            Some(group) if !group.is_empty() => format!("{group}/{name}"),
+            _ => name.to_string(),
+        };
+
+        if !is_internal_package(&package, internal_scopes) {
+            return true;
+        }
+
+        if let Some(reference) = object.get("bom-ref").and_then(Value::as_str) {
+            removed_refs.insert(reference.to_string());
+        }
+
+        false
+    });
+
+    if removed_refs.is_empty() {
+        return;
+    }
+
+    let Some(dependencies) = value.get_mut("dependencies").and_then(Value::as_array_mut) else {
+        return;
+    };
+
+    dependencies.retain(|dependency| {
+        dependency
+            .get("ref")
+            .and_then(Value::as_str)
+            .is_none_or(|reference| !removed_refs.contains(reference))
+    });
+
+    for dependency in dependencies {
+        if let Some(depends_on) = dependency
+            .get_mut("dependsOn")
+            .and_then(Value::as_array_mut)
+        {
+            depends_on.retain(|reference| {
+                reference
+                    .as_str()
+                    .is_none_or(|reference| !removed_refs.contains(reference))
+            });
+        }
+    }
 }
 
 fn normalize_hash_algorithms(value: &mut Value) {
@@ -687,17 +781,96 @@ mod tests {
             ]
         });
 
-        normalize_sbom_value(&mut sbom);
+        normalize_sbom_value(&mut sbom, &[]);
 
         assert!(sbom.get("serialNumber").is_none());
         assert!(sbom["metadata"].get("timestamp").is_none());
         assert!(sbom.get("annotations").is_none());
         assert_eq!(sbom["metadata"]["component"]["name"], "package");
+        assert!(sbom["metadata"].get("properties").is_none());
         assert_eq!(sbom["components"][0]["hashes"][0]["alg"], "SHA-256");
         assert_eq!(
             sbom["components"][0]["hashes"][0]["content"],
             "ddd31a130427c27518df266943a5308ed92d4b226cc639f5a8f1002816174301"
         );
+    }
+
+    #[test]
+    fn filters_internal_components_from_sbom() {
+        let mut sbom = json!({
+            "metadata": {
+                "component": {
+                    "type": "application",
+                    "group": "@stll",
+                    "name": "regex-set"
+                },
+                "properties": [
+                    {
+                        "name": "cdx:bom:componentNamespaces",
+                        "value": "@napi-rs\n@stll"
+                    },
+                    {
+                        "name": "custom",
+                        "value": "keep"
+                    }
+                ]
+            },
+            "components": [
+                {
+                    "bom-ref": "pkg:npm/%40stll/regex-set@0.1.1",
+                    "type": "application",
+                    "group": "@stll",
+                    "name": "regex-set",
+                    "version": "0.1.1"
+                },
+                {
+                    "bom-ref": "pkg:npm/%40stll/regex-set-darwin-arm64@0.1.1",
+                    "type": "library",
+                    "group": "@stll",
+                    "name": "regex-set-darwin-arm64",
+                    "version": "0.1.1"
+                },
+                {
+                    "bom-ref": "pkg:npm/vite@7.3.2",
+                    "type": "library",
+                    "name": "vite",
+                    "version": "7.3.2"
+                }
+            ],
+            "dependencies": [
+                {
+                    "ref": "pkg:npm/%40stll/regex-set@0.1.1",
+                    "dependsOn": [
+                        "pkg:npm/%40stll/regex-set-darwin-arm64@0.1.1",
+                        "pkg:npm/vite@7.3.2"
+                    ]
+                },
+                {
+                    "ref": "pkg:npm/%40stll/regex-set-darwin-arm64@0.1.1",
+                    "dependsOn": []
+                }
+            ]
+        });
+
+        normalize_sbom_value(&mut sbom, &[String::from("@stll")]);
+
+        assert_eq!(sbom["components"].as_array().unwrap().len(), 2);
+        assert_eq!(sbom["components"][0]["name"], "regex-set");
+        assert_eq!(sbom["components"][1]["name"], "vite");
+        assert_eq!(sbom["dependencies"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            sbom["dependencies"][0]["dependsOn"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            sbom["dependencies"][0]["dependsOn"][0],
+            "pkg:npm/vite@7.3.2"
+        );
+        assert_eq!(sbom["metadata"]["properties"].as_array().unwrap().len(), 1);
+        assert_eq!(sbom["metadata"]["properties"][0]["name"], "custom");
     }
 
     #[test]
