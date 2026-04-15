@@ -113,6 +113,15 @@ fn write_minimal_cargo_lock(root: &Path, package: &str, version: &str) {
 }
 
 #[test]
+fn version_flag_matches_package_version() {
+    cargo_bin()
+        .arg("--version")
+        .assert()
+        .success()
+        .stdout(predicate::str::contains(env!("CARGO_PKG_VERSION")));
+}
+
+#[test]
 fn init_refuses_to_overwrite_without_force() {
     let temp = TempDir::new().unwrap();
     write_file(&temp.path().join("package.json"), r#"{"name":"root"}"#);
