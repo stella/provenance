@@ -14,6 +14,8 @@ pub struct Config {
     pub output_dir: PathBuf,
     #[serde(default, skip_serializing_if = "NoticeConfig::is_default")]
     pub notice: NoticeConfig,
+    #[serde(default, skip_serializing_if = "SbomConfig::is_default")]
+    pub sbom: SbomConfig,
     pub projects: Vec<ProjectConfig>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub containers: Vec<ContainerConfig>,
@@ -28,6 +30,18 @@ pub struct NoticeConfig {
 impl NoticeConfig {
     pub fn is_default(&self) -> bool {
         self.internal_scopes.is_empty()
+    }
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize, PartialEq, Eq)]
+pub struct SbomConfig {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub exclude_regexes: Vec<String>,
+}
+
+impl SbomConfig {
+    pub fn is_default(&self) -> bool {
+        self.exclude_regexes.is_empty()
     }
 }
 
@@ -110,6 +124,12 @@ impl Config {
             }
         }
 
+        for regex in &self.sbom.exclude_regexes {
+            if regex.trim().is_empty() {
+                return Err(miette!("sbom exclude regexes cannot be empty"));
+            }
+        }
+
         let mut seen_container_names = BTreeSet::new();
         for container in &self.containers {
             if container.name.trim().is_empty() {
@@ -144,5 +164,35 @@ pub fn resolve_output_dir(root: &Path, config: &Config, explicit_path: Option<&P
         Some(path) => root.join(path),
         None if config.output_dir.is_absolute() => config.output_dir.clone(),
         None => root.join(&config.output_dir),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{Config, SbomConfig};
+
+    #[test]
+    fn rejects_empty_sbom_exclude_regexes() {
+        let config = Config {
+            version: 1,
+            output_dir: "provenance".into(),
+            notice: Default::default(),
+            sbom: SbomConfig {
+                exclude_regexes: vec![String::new()],
+            },
+            projects: vec![super::ProjectConfig {
+                id: String::from("root"),
+                path: ".".into(),
+                ecosystems: vec![super::Ecosystem::Javascript],
+            }],
+            containers: Vec::new(),
+        };
+
+        let error = config.validate().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("sbom exclude regexes cannot be empty")
+        );
     }
 }

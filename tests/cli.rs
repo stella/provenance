@@ -373,6 +373,44 @@ projects:
 }
 
 #[test]
+fn generate_passes_custom_sbom_exclude_regexes_to_cdxgen() {
+    let temp = TempDir::new().unwrap();
+    let stubs = TempDir::new().unwrap();
+    let cdxgen = write_cdxgen_stub(stubs.path());
+    let cdxgen_log = temp.path().join("cdxgen-args.log");
+
+    write_file(&temp.path().join("package.json"), r#"{"name":"root"}"#);
+    write_file(
+        &temp.path().join(".provenance.yml"),
+        r"version: 1
+output_dir: provenance
+sbom:
+  exclude_regexes:
+    - '(^|/)wasm/dist(/.*)?$'
+    - '(^|/)[^/]+\.wasi(?:-browser)?\.js$'
+projects:
+  - id: root
+    path: .
+    ecosystems:
+      - javascript
+",
+    );
+
+    cargo_bin()
+        .current_dir(temp.path())
+        .env("PROVENANCE_CDXGEN", &cdxgen)
+        .env("PROVENANCE_CDXGEN_LOG", &cdxgen_log)
+        .arg("generate")
+        .assert()
+        .success();
+
+    let log = fs::read_to_string(cdxgen_log).unwrap();
+    assert!(log.contains("(^|/)node_modules(/.*)?$"));
+    assert!(log.contains("(^|/)wasm/dist(/.*)?$"));
+    assert!(log.contains("(^|/)[^/]+\\.wasi(?:-browser)?\\.js$"));
+}
+
+#[test]
 fn check_passes_when_outputs_are_current() {
     let temp = TempDir::new().unwrap();
     let stubs = TempDir::new().unwrap();

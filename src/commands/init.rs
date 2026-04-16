@@ -25,6 +25,7 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, force: bool) -> Result<(
         version: 1,
         output_dir: PathBuf::from("provenance"),
         notice: Default::default(),
+        sbom: Default::default(),
         projects: discover_projects(&root)?,
         containers: Vec::new(),
     };
