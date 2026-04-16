@@ -5,6 +5,7 @@ use std::{
 };
 
 use miette::{Context, IntoDiagnostic, Result, miette};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -128,6 +129,9 @@ impl Config {
             if regex.trim().is_empty() {
                 return Err(miette!("sbom exclude regexes cannot be empty"));
             }
+            Regex::new(regex).into_diagnostic().map_err(|error| {
+                miette!("sbom exclude regex '{}' is not valid: {}", regex, error)
+            })?;
         }
 
         let mut seen_container_names = BTreeSet::new();
@@ -193,6 +197,31 @@ mod tests {
             error
                 .to_string()
                 .contains("sbom exclude regexes cannot be empty")
+        );
+    }
+
+    #[test]
+    fn rejects_invalid_sbom_exclude_regexes() {
+        let config = Config {
+            version: 1,
+            output_dir: "provenance".into(),
+            notice: Default::default(),
+            sbom: SbomConfig {
+                exclude_regexes: vec![String::from("[unclosed")],
+            },
+            projects: vec![super::ProjectConfig {
+                id: String::from("root"),
+                path: ".".into(),
+                ecosystems: vec![super::Ecosystem::Javascript],
+            }],
+            containers: Vec::new(),
+        };
+
+        let error = config.validate().unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("sbom exclude regex '[unclosed' is not valid")
         );
     }
 }
