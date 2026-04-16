@@ -10,7 +10,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::{
-    config::{ContainerConfig, Ecosystem, ProjectConfig},
+    config::{ContainerConfig, Ecosystem, ProjectConfig, SbomConfig},
     notice::{DependencyNotice, normalize_licenses},
 };
 
@@ -73,6 +73,7 @@ pub fn generate_project_sbom(
     project: &ProjectConfig,
     output_path: &Path,
     internal_scopes: &[String],
+    sbom_config: &SbomConfig,
 ) -> Result<SbomDocument> {
     let project_dir = resolve_project_path(root, &project.path);
     let command_spec = resolve_cdxgen()?;
@@ -83,9 +84,8 @@ pub fn generate_project_sbom(
     }
     command
         .arg("--no-install-deps")
-        // cdxgen expects a regex here; match node_modules itself and its descendants.
         .arg("--exclude-regex")
-        .arg("(^|/)node_modules(/.*)?$")
+        .arg(build_exclude_regex(sbom_config))
         .arg("--required-only")
         .arg("--json-pretty")
         .arg("-o")
@@ -413,6 +413,22 @@ fn resolve_project_path(root: &Path, project_path: &Path) -> PathBuf {
     }
 }
 
+fn build_exclude_regex(sbom_config: &SbomConfig) -> String {
+    let mut regexes = vec![String::from("(^|/)node_modules(/.*)?$")];
+    regexes.extend(
+        sbom_config
+            .exclude_regexes
+            .iter()
+            .map(|regex| regex.trim().to_string())
+            .filter(|regex| !regex.is_empty()),
+    );
+    regexes
+        .into_iter()
+        .map(|regex| format!("(?:{regex})"))
+        .collect::<Vec<_>>()
+        .join("|")
+}
+
 fn resolve_cdxgen() -> Result<CommandSpec> {
     if let Ok(path) = env::var("PROVENANCE_CDXGEN") {
         return Ok(CommandSpec {
@@ -667,14 +683,14 @@ mod tests {
 
     use super::{
         CargoMetadata, CargoPackage, Component, ComponentLicense, LicenseReference, SbomDocument,
-        apply_cargo_license_metadata, cargo_license_map, extract_notice_entries,
-        extract_rust_notice_entries, is_internal_package, normalize_cargo_license,
-        normalize_sbom_value,
+        apply_cargo_license_metadata, build_exclude_regex, cargo_license_map,
+        extract_notice_entries, extract_rust_notice_entries, is_internal_package,
+        normalize_cargo_license, normalize_sbom_value,
     };
     use serde_json::json;
     use tempfile::tempdir;
 
-    use crate::config::{Ecosystem, ProjectConfig};
+    use crate::config::{Ecosystem, ProjectConfig, SbomConfig};
 
     #[test]
     fn extracts_deduplicated_sorted_notice_entries() {
@@ -750,6 +766,20 @@ mod tests {
             "@scopeish/internal",
             &[String::from("@scope")]
         ));
+    }
+
+    #[test]
+    fn combines_default_and_custom_exclude_regexes() {
+        let regex = build_exclude_regex(&SbomConfig {
+            exclude_regexes: vec![
+                String::from("(^|/)wasm/dist(/.*)?$"),
+                String::from("(^|/)[^/]+\\.wasi(?:-browser)?\\.js$"),
+            ],
+        });
+
+        assert!(regex.contains("node_modules"));
+        assert!(regex.contains("wasm/dist"));
+        assert!(regex.contains("\\.wasi(?:-browser)?\\.js"));
     }
 
     #[test]

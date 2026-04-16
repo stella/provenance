@@ -33,6 +33,9 @@ The workflow is file-based:
   especially when your dependency graph includes platform-specific packages.
 - `notice.internal_scopes` can be used to exclude first-party scoped packages
   from generated notices and repo SBOM component inventories.
+- `sbom.exclude_regexes` can be used to exclude generated runtime artifacts
+  such as `wasm/dist/` outputs or root-level `*.wasi-browser.js` files from
+  SBOM evidence so post-build checks stay deterministic.
 - `output_dir` must point to a dedicated directory such as `provenance`; the
   tool refuses to write managed outputs directly into the repository root.
 

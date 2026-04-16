@@ -88,8 +88,13 @@ pub fn generate_all(
 
         let sbom_path = project_output.join("sbom.cdx.json");
         let notice_path = project_output.join("THIRD-PARTY-NOTICES.txt");
-        let sbom =
-            generate_project_sbom(root, project, &sbom_path, &config.notice.internal_scopes)?;
+        let sbom = generate_project_sbom(
+            root,
+            project,
+            &sbom_path,
+            &config.notice.internal_scopes,
+            &config.sbom,
+        )?;
         let mut entries = extract_notice_entries(&sbom, &config.notice.internal_scopes);
         entries.extend(extract_rust_notice_entries(
             root,
