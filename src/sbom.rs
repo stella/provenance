@@ -6,6 +6,7 @@ use std::{
 };
 
 use miette::{Context, IntoDiagnostic, Result, miette};
+use regex::Regex;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
@@ -98,9 +99,9 @@ pub fn generate_project_sbom(
         &format!("cdxgen for project '{}'", project.id),
         Some(output_path),
     )?;
-    normalize_sbom_file(output_path, internal_scopes)?;
+    normalize_sbom_file(output_path, internal_scopes, sbom_config)?;
     enrich_rust_component_licenses(root, project, output_path)?;
-    normalize_sbom_file(output_path, internal_scopes)?;
+    normalize_sbom_file(output_path, internal_scopes, sbom_config)?;
     load_sbom(output_path)
 }
 
@@ -136,7 +137,7 @@ pub fn generate_container_sbom(
     fs::write(output_path, &output.stdout)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to write {}", output_path.display()))?;
-    normalize_sbom_file(output_path, &[])?;
+    normalize_sbom_file(output_path, &[], &SbomConfig::default())?;
     load_sbom(output_path)
 }
 
@@ -518,7 +519,11 @@ fn load_sbom(path: &Path) -> Result<SbomDocument> {
         .wrap_err_with(|| format!("failed to parse {}", path.display()))
 }
 
-fn normalize_sbom_file(path: &Path, internal_scopes: &[String]) -> Result<()> {
+fn normalize_sbom_file(
+    path: &Path,
+    internal_scopes: &[String],
+    sbom_config: &SbomConfig,
+) -> Result<()> {
     let raw = fs::read_to_string(path)
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to read {}", path.display()))?;
@@ -526,7 +531,8 @@ fn normalize_sbom_file(path: &Path, internal_scopes: &[String]) -> Result<()> {
         .into_diagnostic()
         .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
 
-    normalize_sbom_value(&mut value, internal_scopes);
+    let exclude_path_regex = compiled_exclude_path_regex(sbom_config)?;
+    normalize_sbom_value(&mut value, internal_scopes, exclude_path_regex.as_ref());
 
     let rendered = serde_json::to_string_pretty(&value)
         .into_diagnostic()
@@ -536,13 +542,32 @@ fn normalize_sbom_file(path: &Path, internal_scopes: &[String]) -> Result<()> {
         .wrap_err_with(|| format!("failed to write {}", path.display()))
 }
 
-fn normalize_sbom_value(value: &mut Value, internal_scopes: &[String]) {
+fn normalize_sbom_value(
+    value: &mut Value,
+    internal_scopes: &[String],
+    exclude_path_regex: Option<&Regex>,
+) {
     remove_object_key(value, &["serialNumber"]);
     remove_object_key(value, &["metadata", "timestamp"]);
     remove_object_key(value, &["annotations"]);
     normalize_hash_algorithms(value);
     remove_cdx_bom_metadata_properties(value);
+    remove_component_property_named(value, "ImportedModules");
+    if let Some(exclude_path_regex) = exclude_path_regex {
+        remove_excluded_occurrences(value, exclude_path_regex);
+    }
     remove_internal_components(value, internal_scopes);
+}
+
+fn compiled_exclude_path_regex(sbom_config: &SbomConfig) -> Result<Option<Regex>> {
+    if sbom_config.exclude_regexes.is_empty() {
+        return Ok(None);
+    }
+
+    Regex::new(&build_exclude_regex(sbom_config))
+        .into_diagnostic()
+        .wrap_err("compiled sbom exclude regex is invalid")
+        .map(Some)
 }
 
 fn remove_cdx_bom_metadata_properties(value: &mut Value) {
@@ -563,6 +588,67 @@ fn remove_cdx_bom_metadata_properties(value: &mut Value) {
 
     if properties.is_empty() {
         remove_object_key(value, &["metadata", "properties"]);
+    }
+}
+
+fn remove_component_property_named(value: &mut Value, property_name: &str) {
+    match value {
+        Value::Object(object) => {
+            if let Some(properties) = object.get_mut("properties").and_then(Value::as_array_mut) {
+                properties.retain(|property| {
+                    property
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .is_none_or(|name| name != property_name)
+                });
+
+                if properties.is_empty() {
+                    object.remove("properties");
+                }
+            }
+
+            for child in object.values_mut() {
+                remove_component_property_named(child, property_name);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                remove_component_property_named(item, property_name);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn remove_excluded_occurrences(value: &mut Value, exclude_path_regex: &Regex) {
+    match value {
+        Value::Object(object) => {
+            if let Some(occurrences) = object.get_mut("occurrences").and_then(Value::as_array_mut) {
+                occurrences.retain(|occurrence| {
+                    occurrence
+                        .get("location")
+                        .and_then(Value::as_str)
+                        .is_none_or(|location| {
+                            let path = location.split('#').next().unwrap_or(location);
+                            !exclude_path_regex.is_match(path)
+                        })
+                });
+
+                if occurrences.is_empty() {
+                    object.remove("occurrences");
+                }
+            }
+
+            for child in object.values_mut() {
+                remove_excluded_occurrences(child, exclude_path_regex);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                remove_excluded_occurrences(item, exclude_path_regex);
+            }
+        }
+        _ => {}
     }
 }
 
@@ -684,8 +770,8 @@ mod tests {
     use super::{
         CargoMetadata, CargoPackage, Component, ComponentLicense, LicenseReference, SbomDocument,
         apply_cargo_license_metadata, build_exclude_regex, cargo_license_map,
-        extract_notice_entries, extract_rust_notice_entries, is_internal_package,
-        normalize_cargo_license, normalize_sbom_value,
+        compiled_exclude_path_regex, extract_notice_entries, extract_rust_notice_entries,
+        is_internal_package, normalize_cargo_license, normalize_sbom_value,
     };
     use serde_json::json;
     use tempfile::tempdir;
@@ -811,7 +897,7 @@ mod tests {
             ]
         });
 
-        normalize_sbom_value(&mut sbom, &[]);
+        normalize_sbom_value(&mut sbom, &[], None);
 
         assert!(sbom.get("serialNumber").is_none());
         assert!(sbom["metadata"].get("timestamp").is_none());
@@ -882,7 +968,7 @@ mod tests {
             ]
         });
 
-        normalize_sbom_value(&mut sbom, &[String::from("@stll")]);
+        normalize_sbom_value(&mut sbom, &[String::from("@stll")], None);
 
         assert_eq!(sbom["components"].as_array().unwrap().len(), 2);
         assert_eq!(sbom["components"][0]["name"], "regex-set");
@@ -901,6 +987,69 @@ mod tests {
         );
         assert_eq!(sbom["metadata"]["properties"].as_array().unwrap().len(), 1);
         assert_eq!(sbom["metadata"]["properties"][0]["name"], "custom");
+    }
+
+    #[test]
+    fn removes_imported_modules_and_excluded_occurrences() {
+        let exclude_regex = compiled_exclude_path_regex(&SbomConfig {
+            exclude_regexes: vec![
+                String::from("(^|/)wasm/dist(/.*)?$"),
+                String::from("(^|/)[^/]+\\.wasi(?:-browser)?\\.(?:c?js)$"),
+            ],
+        })
+        .unwrap();
+        let mut sbom = json!({
+            "components": [
+                {
+                    "name": "wasm-runtime",
+                    "properties": [
+                        {
+                            "name": "ImportedModules",
+                            "value": "@napi-rs/wasm-runtime/createOnMessage"
+                        },
+                        {
+                            "name": "SrcFile",
+                            "value": "node_modules/@napi-rs/wasm-runtime/package.json"
+                        }
+                    ],
+                    "evidence": {
+                        "occurrences": [
+                            {
+                                "location": "fuzzy-search.wasi-browser.js#6"
+                            },
+                            {
+                                "location": "wasi-worker-browser.mjs#1"
+                            },
+                            {
+                                "location": "wasm/dist/wasm.mjs#1"
+                            }
+                        ]
+                    }
+                }
+            ]
+        });
+
+        normalize_sbom_value(&mut sbom, &[], exclude_regex.as_ref());
+
+        assert_eq!(
+            sbom["components"][0]["properties"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(sbom["components"][0]["properties"][0]["name"], "SrcFile");
+        assert_eq!(
+            sbom["components"][0]["evidence"]["occurrences"]
+                .as_array()
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(
+            sbom["components"][0]["evidence"]["occurrences"][0]["location"],
+            "wasi-worker-browser.mjs#1"
+        );
     }
 
     #[test]
