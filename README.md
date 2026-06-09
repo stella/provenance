@@ -37,10 +37,12 @@ The workflow is file-based:
   generation time. Install **production dependencies only** before running
   (for example `bun install --frozen-lockfile --production`, or
   `npm ci --omit=dev`) so the generated SBOM and notices describe the shipped
-  closure and do not include development-only dependencies. The tool does not
-  pass cdxgen `--required-only`, because for bun lockfiles that flag drops
-  shipped transitive dependencies (and production dependencies imported only
-  from type-declaration or test files) instead of dev dependencies.
+  closure and do not include development-only dependencies. For JavaScript
+  projects the tool does not pass cdxgen `--required-only`, because for bun
+  lockfiles that flag drops shipped transitive dependencies (and production
+  dependencies imported only from type-declaration or test files) instead of
+  dev dependencies. Non-JavaScript projects (for example Rust crates) keep
+  `--required-only`.
 - `sbom.exclude_regexes` can be used to exclude generated runtime artifacts
   such as `wasm/dist/` outputs or root-level `*.wasi-browser.js` files from
   SBOM evidence so post-build checks stay deterministic.

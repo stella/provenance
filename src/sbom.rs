@@ -86,14 +86,20 @@ pub fn generate_project_sbom(
     command
         .arg("--no-install-deps")
         .arg("--exclude-regex")
-        .arg(build_exclude_regex(sbom_config))
-        // Deliberately omit cdxgen's --required-only. For bun lockfiles cdxgen
-        // derives component scope from source-usage evidence rather than the
-        // manifest, so it marks shipped transitive dependencies (and production
-        // dependencies imported only from type-declaration or test files) as
-        // optional and drops them, producing an incomplete SBOM. Completeness of
-        // the shipped closure is gated on the install instead: callers must
-        // install production dependencies only (see README "Boundaries").
+        .arg(build_exclude_regex(sbom_config));
+    // cdxgen's --required-only keeps only `required`-scope components. For bun
+    // lockfiles cdxgen derives scope from source-usage evidence rather than the
+    // manifest, so it marks shipped transitive dependencies (and production
+    // dependencies imported only from type-declaration or test files) as
+    // optional and drops them, producing an incomplete SBOM. Omit the flag for
+    // any project that includes the JavaScript ecosystem; development
+    // dependencies are excluded by installing production dependencies only (see
+    // README "Boundaries"). Non-JavaScript projects keep the flag so their
+    // existing behavior is unchanged.
+    if !project.ecosystems.contains(&Ecosystem::Javascript) {
+        command.arg("--required-only");
+    }
+    command
         .arg("--json-pretty")
         .arg("-o")
         .arg(output_path)
