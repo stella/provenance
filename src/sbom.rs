@@ -87,7 +87,13 @@ pub fn generate_project_sbom(
         .arg("--no-install-deps")
         .arg("--exclude-regex")
         .arg(build_exclude_regex(sbom_config))
-        .arg("--required-only")
+        // Deliberately omit cdxgen's --required-only. For bun lockfiles cdxgen
+        // derives component scope from source-usage evidence rather than the
+        // manifest, so it marks shipped transitive dependencies (and production
+        // dependencies imported only from type-declaration or test files) as
+        // optional and drops them, producing an incomplete SBOM. Completeness of
+        // the shipped closure is gated on the install instead: callers must
+        // install production dependencies only (see README "Boundaries").
         .arg("--json-pretty")
         .arg("-o")
         .arg(output_path)
