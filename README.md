@@ -42,7 +42,8 @@ The workflow is file-based:
   lockfiles that flag drops shipped transitive dependencies (and production
   dependencies imported only from type-declaration or test files) instead of
   dev dependencies. Non-JavaScript projects (for example Rust crates) keep
-  `--required-only`.
+  `--required-only`; mixed JavaScript/Rust projects apply the equivalent
+  required-scope filter only to Cargo components after generation.
 - `sbom.exclude_regexes` can be used to exclude generated runtime artifacts
   such as `wasm/dist/` outputs or root-level `*.wasi-browser.js` files from
   SBOM evidence so post-build checks stay deterministic.
