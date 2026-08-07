@@ -86,8 +86,21 @@ pub fn generate_project_sbom(
     command
         .arg("--no-install-deps")
         .arg("--exclude-regex")
-        .arg(build_exclude_regex(sbom_config))
-        .arg("--required-only")
+        .arg(build_exclude_regex(sbom_config));
+    // cdxgen's --required-only keeps only `required`-scope components. For bun
+    // lockfiles cdxgen derives scope from source-usage evidence rather than the
+    // manifest, so it marks shipped transitive dependencies (and production
+    // dependencies imported only from type-declaration or test files) as
+    // optional and drops them, producing an incomplete SBOM. Omit the flag for
+    // any project that includes the JavaScript ecosystem; development
+    // dependencies are excluded by installing production dependencies only (see
+    // README "Boundaries"). Non-JavaScript projects keep the flag. Mixed
+    // JavaScript/Rust projects are post-filtered below so optional Cargo
+    // components retain the behavior `--required-only` would have provided.
+    if !project.ecosystems.contains(&Ecosystem::Javascript) {
+        command.arg("--required-only");
+    }
+    command
         .arg("--json-pretty")
         .arg("-o")
         .arg(output_path)
@@ -99,6 +112,11 @@ pub fn generate_project_sbom(
         &format!("cdxgen for project '{}'", project.id),
         Some(output_path),
     )?;
+    if project.ecosystems.contains(&Ecosystem::Javascript)
+        && project.ecosystems.contains(&Ecosystem::Rust)
+    {
+        remove_optional_rust_components(output_path)?;
+    }
     normalize_sbom_file(output_path, internal_scopes, sbom_config)?;
     enrich_rust_component_licenses(root, project, output_path)?;
     normalize_sbom_file(output_path, internal_scopes, sbom_config)?;
@@ -542,6 +560,50 @@ fn normalize_sbom_file(
         .wrap_err_with(|| format!("failed to write {}", path.display()))
 }
 
+/// In a mixed JavaScript/Rust scan cdxgen cannot apply `--required-only` to
+/// only the Cargo half of the result. JavaScript needs the flag omitted for bun
+/// completeness, while Cargo still needs its optional/dev components removed.
+/// Mirror cdxgen's required-only component filter for Cargo purls and clean the
+/// dependency graph references that point at removed components.
+fn remove_optional_rust_components(path: &Path) -> Result<()> {
+    let raw = fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read {}", path.display()))?;
+    let mut value = serde_json::from_str::<Value>(&raw)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
+
+    let mut removed_refs = BTreeSet::new();
+    if let Some(components) = value.get_mut("components").and_then(Value::as_array_mut) {
+        components.retain(|component| {
+            let Some(object) = component.as_object() else {
+                return true;
+            };
+            let is_optional_cargo = object.get("scope").and_then(Value::as_str) == Some("optional")
+                && object
+                    .get("purl")
+                    .and_then(Value::as_str)
+                    .is_some_and(|purl| purl.starts_with("pkg:cargo/"));
+            if !is_optional_cargo {
+                return true;
+            }
+            if let Some(reference) = object.get("bom-ref").and_then(Value::as_str) {
+                removed_refs.insert(reference.to_string());
+            }
+            false
+        });
+    }
+
+    remove_dependency_references(&mut value, &removed_refs);
+
+    let rendered = serde_json::to_string_pretty(&value)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to render {}", path.display()))?;
+    fs::write(path, format!("{rendered}\n"))
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to write {}", path.display()))
+}
+
 fn normalize_sbom_value(
     value: &mut Value,
     internal_scopes: &[String],
@@ -692,10 +754,13 @@ fn remove_internal_components(value: &mut Value, internal_scopes: &[String]) {
         false
     });
 
+    remove_dependency_references(value, &removed_refs);
+}
+
+fn remove_dependency_references(value: &mut Value, removed_refs: &BTreeSet<String>) {
     if removed_refs.is_empty() {
         return;
     }
-
     let Some(dependencies) = value.get_mut("dependencies").and_then(Value::as_array_mut) else {
         return;
     };
@@ -772,8 +837,9 @@ mod tests {
         apply_cargo_license_metadata, build_exclude_regex, cargo_license_map,
         compiled_exclude_path_regex, extract_notice_entries, extract_rust_notice_entries,
         is_internal_package, normalize_cargo_license, normalize_sbom_value,
+        remove_optional_rust_components,
     };
-    use serde_json::json;
+    use serde_json::{Value, json};
     use tempfile::tempdir;
 
     use crate::config::{Ecosystem, ProjectConfig, SbomConfig};
@@ -987,6 +1053,69 @@ mod tests {
         );
         assert_eq!(sbom["metadata"]["properties"].as_array().unwrap().len(), 1);
         assert_eq!(sbom["metadata"]["properties"][0]["name"], "custom");
+    }
+
+    #[test]
+    fn mixed_project_filter_removes_only_optional_cargo_components() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("sbom.json");
+        fs::write(
+            &path,
+            serde_json::to_string(&json!({
+                "components": [
+                    {
+                        "bom-ref": "pkg:npm/dev-only@1.0.0",
+                        "purl": "pkg:npm/dev-only@1.0.0",
+                        "scope": "optional"
+                    },
+                    {
+                        "bom-ref": "pkg:cargo/runtime@1.0.0",
+                        "purl": "pkg:cargo/runtime@1.0.0",
+                        "scope": "required"
+                    },
+                    {
+                        "bom-ref": "pkg:cargo/dev-only@1.0.0",
+                        "purl": "pkg:cargo/dev-only@1.0.0",
+                        "scope": "optional"
+                    }
+                ],
+                "dependencies": [
+                    {
+                        "ref": "root",
+                        "dependsOn": [
+                            "pkg:npm/dev-only@1.0.0",
+                            "pkg:cargo/runtime@1.0.0",
+                            "pkg:cargo/dev-only@1.0.0"
+                        ]
+                    },
+                    {
+                        "ref": "pkg:cargo/dev-only@1.0.0",
+                        "dependsOn": []
+                    }
+                ]
+            }))
+            .unwrap(),
+        )
+        .unwrap();
+
+        remove_optional_rust_components(&path).unwrap();
+        let sbom: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        let refs = sbom["components"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter_map(|component| component["bom-ref"].as_str())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            refs,
+            vec!["pkg:npm/dev-only@1.0.0", "pkg:cargo/runtime@1.0.0"]
+        );
+        assert_eq!(sbom["dependencies"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            sbom["dependencies"][0]["dependsOn"],
+            json!(["pkg:npm/dev-only@1.0.0", "pkg:cargo/runtime@1.0.0"])
+        );
     }
 
     #[test]

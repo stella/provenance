@@ -33,6 +33,17 @@ The workflow is file-based:
   especially when your dependency graph includes platform-specific packages.
 - `notice.internal_scopes` can be used to exclude first-party scoped packages
   from generated notices and repo SBOM component inventories.
+- The JavaScript SBOM reflects whatever is present in `node_modules` at
+  generation time. Install **production dependencies only** before running
+  (for example `bun install --frozen-lockfile --production`, or
+  `npm ci --omit=dev`) so the generated SBOM and notices describe the shipped
+  closure and do not include development-only dependencies. For JavaScript
+  projects the tool does not pass cdxgen `--required-only`, because for bun
+  lockfiles that flag drops shipped transitive dependencies (and production
+  dependencies imported only from type-declaration or test files) instead of
+  dev dependencies. Non-JavaScript projects (for example Rust crates) keep
+  `--required-only`; mixed JavaScript/Rust projects apply the equivalent
+  required-scope filter only to Cargo components after generation.
 - `sbom.exclude_regexes` can be used to exclude generated runtime artifacts
   such as `wasm/dist/` outputs or root-level `*.wasi-browser.js` files from
   SBOM evidence so post-build checks stay deterministic.
