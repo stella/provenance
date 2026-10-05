@@ -154,3 +154,7 @@ cargo doc --no-deps
 cargo deny check
 cargo package --locked
 ```
+
+## License
+
+[Apache-2.0](./LICENSE)
