@@ -4,12 +4,48 @@ on:
   push:
     branches: [main]
   pull_request:
+    types: [opened, synchronize, reopened, ready_for_review, labeled]
 
 permissions:
   contents: read
 
+env:
+  RUSTUP_TOOLCHAIN: 1.99.0
+
 jobs:
+  trust-check:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    outputs:
+      trusted: ${{ steps.check.outputs.trusted }}
+    steps:
+      - name: Check if PR is trusted
+        id: check
+        env:
+          HEAD_REPO: >-
+            ${{ github.event.pull_request.head.repo.full_name }}
+          BASE_REPO: ${{ github.repository }}
+        run: |
+          if [[ "$HEAD_REPO" == "$BASE_REPO" ]]; then
+            echo "trusted=true" >> "$GITHUB_OUTPUT"
+          elif [[ '${{ contains(github.event.pull_request.labels.*.name, 'run-ci') }}' == 'true' ]]; then
+            echo "trusted=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "trusted=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::Fork PR without 'run-ci' label — CI skipped."
+          fi
+
   rust:
+    needs: [trust-check]
+    if: >-
+      always()
+      && !cancelled()
+      && (github.event_name != 'pull_request'
+          || needs.trust-check.outputs.trusted == 'true')
+    env:
+      STELLA_SOURCE_LINT_REV: a1bd81740ecb4b66999f56d1716e1190c4e7272f
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -17,10 +53,24 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
-          toolchain: stable
+          toolchain: 1.99.0
           components: rustfmt, clippy
 
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
+
+      - uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        id: source-lint-cache
+        with:
+          path: ${{ runner.temp }}/stella-source-lint/bin
+          key: stella-source-lint-${{ runner.os }}-${{ runner.arch }}-${{ env.STELLA_SOURCE_LINT_REV }}
+      - name: Install stable Rust source checker
+        if: steps.source-lint-cache.outputs.cache-hit != 'true'
+        run: >-
+          cargo install --git https://github.com/stella/tooling
+          --rev "$STELLA_SOURCE_LINT_REV" --locked
+          --root "$RUNNER_TEMP/stella-source-lint" stella_source_lint
+      - run: echo "$RUNNER_TEMP/stella-source-lint/bin" >> "$GITHUB_PATH"
+      - run: cargo stella-lint .
 
       - name: Format
         run: cargo fmt --all -- --check
@@ -45,6 +95,12 @@ jobs:
           cargo deny check
 
   integration-real:
+    needs: [trust-check]
+    if: >-
+      always()
+      && !cancelled()
+      && (github.event_name != 'pull_request'
+          || needs.trust-check.outputs.trusted == 'true')
     runs-on: ubuntu-latest
     timeout-minutes: 20
     steps:
@@ -52,13 +108,16 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
-          toolchain: stable
+          toolchain: 1.99.0
 
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
 
       - uses: actions/setup-node@53b83947a5a98c8d113130e565377fae1a50d02f # v6
         with:
-          node-version: 22
+          node-version-file: .node-version
+
+      - name: Validate workflow trust contracts
+        run: node --test scripts/ci-trust.test.mjs
 
       - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
         with:
