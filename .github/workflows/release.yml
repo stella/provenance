@@ -15,6 +15,7 @@ permissions:
   contents: write
 
 env:
+  RUSTUP_TOOLCHAIN: 1.99.0
   CARGO_INCREMENTAL: 0
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: true
   RELEASE_TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.release-tag || github.ref_name }}
@@ -44,7 +45,7 @@ jobs:
 
       - uses: dtolnay/rust-toolchain@3c5f7ea28cd621ae0bf5283f0e981fb97b8a7af9
         with:
-          toolchain: stable
+          toolchain: 1.99.0
           targets: ${{ matrix.target }}
 
       - uses: Swatinem/rust-cache@42dc69e1aa15d09112580998cf2ef0119e2e91ae # v2
