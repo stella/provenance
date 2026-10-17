@@ -17,8 +17,7 @@ jobs:
   cla:
     if: |
       (
-        github.event_name == 'pull_request_target' &&
-        github.event.pull_request.user.login != 'dependabot[bot]'
+        github.event_name == 'pull_request_target'
       ) || (
         github.event_name == 'issue_comment' &&
         github.event.issue.pull_request &&
@@ -27,8 +26,8 @@ jobs:
           github.event.comment.body == 'I have read the CLA Document and I hereby sign the CLA'
         )
       )
-    uses: stella/.github/.github/workflows/cla.yml@5764ab66e4df84cfd2e642c7d7e4678261e668f8 # main
+    uses: stella/.github/.github/workflows/cla.yml@8f19eb7220047e5b06f6e75f0b9f908bfd01f5f6 # main
     with:
-      allowlist: dependabot[bot],renovate[bot],github-actions[bot]
+      allowlist: dependabot[bot],renovate[bot],github-actions[bot],stella-provenance-updater[bot]
     secrets:
       CLA_APP_PRIVATE_KEY: ${{ secrets.CLA_APP_PRIVATE_KEY }}
