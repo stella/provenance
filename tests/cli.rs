@@ -96,11 +96,72 @@ fn write_syft_stub(dir: &Path) -> PathBuf {
     )
 }
 
+#[test]
+fn generate_filters_dev_only_name_collision_from_sbom_and_notice() {
+    let temp = TempDir::new().unwrap();
+    let stubs = TempDir::new().unwrap();
+    let cdxgen = write_script(
+        stubs.path(),
+        "collision-cdxgen.sh",
+        r#"#!/bin/sh
+set -eu
+while [ "$#" -gt 0 ]; do
+  if [ "$1" = "-o" ]; then out="$2"; shift 2; continue; fi
+  shift
+done
+mkdir -p "$(dirname "$out")"
+cat > "$out" <<'JSON'
+{"components":[{"bom-ref":"runtime","name":"runtime","version":"1.0.0","purl":"pkg:npm/runtime@1.0.0","licenses":[{"license":{"id":"MIT"}}]},{"bom-ref":"quansync","group":"@quansync","name":"fs","version":"1.1.0","scope":"required","purl":"pkg:npm/%40quansync/fs@1.1.0","licenses":[{"license":{"id":"MIT"}}],"evidence":{"occurrences":[{"location":"index.cjs#6"}]}}],"dependencies":[{"ref":"runtime","dependsOn":["quansync"]},{"ref":"quansync","dependsOn":[]}]}
+JSON
+"#,
+    );
+    write_file(
+        &temp.path().join("package.json"),
+        r#"{"name":"fixture","dependencies":{"runtime":"1.0.0"},"devDependencies":{"@quansync/fs":"1.1.0"}}"#,
+    );
+    write_file(
+        &temp.path().join("bun.lock"),
+        r#"{"lockfileVersion":1,"workspaces":{"":{"name":"fixture","dependencies":{"runtime":"1.0.0"},"devDependencies":{"@quansync/fs":"1.1.0"}}},"packages":{"runtime":["runtime@1.0.0","",{}],"@quansync/fs":["@quansync/fs@1.1.0","",{}]}}"#,
+    );
+    write_file(
+        &temp.path().join("index.cjs"),
+        "require('fs'); require('path'); require('url');\n",
+    );
+    write_file(
+        &temp.path().join("node_modules/@quansync/fs/package.json"),
+        r#"{"name":"@quansync/fs","version":"1.1.0"}"#,
+    );
+    write_file(
+        &temp.path().join(".provenance.yml"),
+        "version: 1\nprojects:\n  - id: root\n    path: .\n    ecosystems: [javascript]\n",
+    );
+
+    cargo_bin()
+        .current_dir(temp.path())
+        .env("PROVENANCE_CDXGEN", cdxgen)
+        .arg("generate")
+        .assert()
+        .success();
+    let sbom = fs::read_to_string(temp.path().join("provenance/sbom.cdx.json")).unwrap();
+    let notice =
+        fs::read_to_string(temp.path().join("provenance/THIRD-PARTY-NOTICES.txt")).unwrap();
+    assert!(sbom.contains("pkg:npm/runtime@1.0.0"));
+    assert!(!sbom.contains("quansync"));
+    assert!(!notice.contains("quansync"));
+}
+
 fn write_file(path: &Path, contents: &str) {
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).unwrap();
     }
     fs::write(path, contents).unwrap();
+    if path.file_name().and_then(|name| name.to_str()) == Some("package.json") {
+        fs::write(
+            path.parent().unwrap().join("bun.lock"),
+            r#"{ "lockfileVersion": 1, "workspaces": { "": { "name": "fixture" } }, "packages": {} }"#,
+        )
+        .unwrap();
+    }
 }
 
 fn write_minimal_cargo_lock(root: &Path, package: &str, version: &str) {
