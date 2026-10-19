@@ -13,7 +13,7 @@ permissions:
 jobs:
   trust-check:
     if: github.event_name == 'pull_request'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     permissions:
       contents: read
     outputs:
@@ -43,7 +43,7 @@ jobs:
       && (github.event_name != 'pull_request'
           || needs.trust-check.outputs.trusted == 'true')
     name: Check generated AI instructions
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-24.04
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6
         with:
