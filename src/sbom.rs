@@ -12,6 +12,7 @@ use serde_json::Value;
 
 use crate::{
     config::{ContainerConfig, Ecosystem, ProjectConfig, SbomConfig},
+    javascript::{JavascriptClosureError, PackageIdentity, is_node_builtin, production_closure},
     notice::{DependencyNotice, normalize_licenses},
 };
 
@@ -77,6 +78,11 @@ pub fn generate_project_sbom(
     sbom_config: &SbomConfig,
 ) -> Result<SbomDocument> {
     let project_dir = resolve_project_path(root, &project.path);
+    let javascript_closure = project
+        .ecosystems
+        .contains(&Ecosystem::Javascript)
+        .then(|| production_closure(&project_dir))
+        .transpose()?;
     let command_spec = resolve_cdxgen()?;
     let mut command = Command::new(&command_spec.program);
     command.args(&command_spec.prefix_args);
@@ -92,9 +98,9 @@ pub fn generate_project_sbom(
     // manifest, so it marks shipped transitive dependencies (and production
     // dependencies imported only from type-declaration or test files) as
     // optional and drops them, producing an incomplete SBOM. Omit the flag for
-    // any project that includes the JavaScript ecosystem; development
-    // dependencies are excluded by installing production dependencies only (see
-    // README "Boundaries"). Non-JavaScript projects keep the flag. Mixed
+    // any project that includes the JavaScript ecosystem; the manifest-and-lockfile
+    // closure filter below excludes development dependencies. Non-JavaScript
+    // projects keep the flag. Mixed
     // JavaScript/Rust projects are post-filtered below so optional Cargo
     // components retain the behavior `--required-only` would have provided.
     if !project.ecosystems.contains(&Ecosystem::Javascript) {
@@ -112,6 +118,9 @@ pub fn generate_project_sbom(
         &format!("cdxgen for project '{}'", project.id),
         Some(output_path),
     )?;
+    if let Some(closure) = javascript_closure.as_ref() {
+        filter_javascript_components(output_path, closure)?;
+    }
     if project.ecosystems.contains(&Ecosystem::Javascript)
         && project.ecosystems.contains(&Ecosystem::Rust)
     {
@@ -121,6 +130,64 @@ pub fn generate_project_sbom(
     enrich_rust_component_licenses(root, project, output_path)?;
     normalize_sbom_file(output_path, internal_scopes, sbom_config)?;
     load_sbom(output_path)
+}
+
+fn filter_javascript_components(path: &Path, closure: &BTreeSet<PackageIdentity>) -> Result<()> {
+    let raw = fs::read_to_string(path)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to read {}", path.display()))?;
+    let mut value = serde_json::from_str::<Value>(&raw)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
+    let mut present = BTreeSet::new();
+    let mut removed_refs = BTreeSet::new();
+    if let Some(components) = value.get_mut("components").and_then(Value::as_array_mut) {
+        components.retain(|component| {
+            let Some(object) = component.as_object() else {
+                return true;
+            };
+            let Some(purl) = object.get("purl").and_then(Value::as_str) else {
+                return true;
+            };
+            let Some(identity) = npm_identity_from_purl(purl) else {
+                return true;
+            };
+            let keep = !is_node_builtin(&identity.0) && closure.contains(&identity);
+            if keep {
+                present.insert(identity);
+            } else if let Some(reference) = object.get("bom-ref").and_then(Value::as_str) {
+                removed_refs.insert(reference.to_string());
+            }
+            keep
+        });
+    }
+    remove_dependency_references(&mut value, &removed_refs);
+    let missing = closure
+        .difference(&present)
+        .map(|(name, version)| format!("{name}@{version}"))
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(JavascriptClosureError::MissingComponents {
+            packages: missing.join(", "),
+        }
+        .into());
+    }
+    let rendered = serde_json::to_string_pretty(&value)
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to render {}", path.display()))?;
+    fs::write(path, format!("{rendered}\n"))
+        .into_diagnostic()
+        .wrap_err_with(|| format!("failed to write {}", path.display()))
+}
+
+fn npm_identity_from_purl(purl: &str) -> Option<PackageIdentity> {
+    let value = purl.strip_prefix("pkg:npm/")?.split(['?', '#']).next()?;
+    let split = value.rfind('@')?;
+    let name = value[..split]
+        .replace("%40", "@")
+        .replace("%2F", "/")
+        .replace("%2f", "/");
+    Some((name, value[split + 1..].to_string()))
 }
 
 pub fn generate_container_sbom(
@@ -830,19 +897,94 @@ fn remove_object_key(value: &mut Value, path: &[&str]) {
 
 #[cfg(test)]
 mod tests {
-    use std::fs;
+    use std::{collections::BTreeSet, fs};
 
     use super::{
         CargoMetadata, CargoPackage, Component, ComponentLicense, LicenseReference, SbomDocument,
         apply_cargo_license_metadata, build_exclude_regex, cargo_license_map,
         compiled_exclude_path_regex, extract_notice_entries, extract_rust_notice_entries,
-        is_internal_package, normalize_cargo_license, normalize_sbom_value,
-        remove_optional_rust_components,
+        filter_javascript_components, is_internal_package, normalize_cargo_license,
+        normalize_sbom_value, remove_optional_rust_components,
     };
     use serde_json::{Value, json};
     use tempfile::tempdir;
 
     use crate::config::{Ecosystem, ProjectConfig, SbomConfig};
+
+    #[test]
+    fn filters_dev_only_npm_components_and_graph_references() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("sbom.json");
+        fs::write(&path, serde_json::to_vec(&json!({
+            "components": [
+                {"bom-ref":"runtime", "name":"runtime", "version":"1.0.0", "purl":"pkg:npm/runtime@1.0.0"},
+                {"bom-ref":"quansync", "group":"@quansync", "name":"fs", "version":"1.1.0", "scope":"required", "purl":"pkg:npm/%40quansync/fs@1.1.0", "evidence":{"occurrences":[{"location":"index.cjs#6"}]}}
+            ],
+            "dependencies": [
+                {"ref":"runtime", "dependsOn":["quansync"]},
+                {"ref":"quansync", "dependsOn":[]}
+            ]
+        })).unwrap()).unwrap();
+        let closure = [(String::from("runtime"), String::from("1.0.0"))]
+            .into_iter()
+            .collect();
+
+        filter_javascript_components(&path, &closure).unwrap();
+        let filtered: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(filtered["components"].as_array().unwrap().len(), 1);
+        assert_eq!(
+            filtered["dependencies"],
+            json!([{"ref":"runtime", "dependsOn":[]} ])
+        );
+        assert!(!filtered.to_string().contains("quansync"));
+    }
+
+    #[test]
+    fn missing_closure_component_is_an_error() {
+        let temp = tempdir().unwrap();
+        let path = temp.path().join("sbom.json");
+        fs::write(&path, r#"{"components":[]}"#).unwrap();
+        let closure = [(String::from("missing"), String::from("1.2.3"))]
+            .into_iter()
+            .collect();
+        let error = filter_javascript_components(&path, &closure).unwrap_err();
+        assert!(error.to_string().contains("missing@1.2.3"));
+    }
+
+    #[test]
+    fn filtering_a_superset_always_equals_the_closure() {
+        for seed in 0_u64..64 {
+            let temp = tempdir().unwrap();
+            let path = temp.path().join("sbom.json");
+            let closure = (0_u64..12)
+                .filter(|index| ((seed >> (index % 6)) ^ *index) & 1 == 0)
+                .map(|index| (format!("package-{index}"), format!("1.{index}.0")))
+                .collect::<BTreeSet<_>>();
+            let components = (0..12).map(|index| json!({
+                "bom-ref": format!("package-{index}"), "name": format!("package-{index}"),
+                "version": format!("1.{index}.0"), "purl": format!("pkg:npm/package-{index}@1.{index}.0")
+            })).collect::<Vec<_>>();
+            fs::write(
+                &path,
+                serde_json::to_vec(&json!({"components":components})).unwrap(),
+            )
+            .unwrap();
+            filter_javascript_components(&path, &closure).unwrap();
+            let filtered: Value = serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+            let actual = filtered["components"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|component| {
+                    (
+                        component["name"].as_str().unwrap().to_string(),
+                        component["version"].as_str().unwrap().to_string(),
+                    )
+                })
+                .collect::<BTreeSet<_>>();
+            assert_eq!(actual, closure, "seed {seed}");
+        }
+    }
 
     #[test]
     fn extracts_deduplicated_sorted_notice_entries() {
