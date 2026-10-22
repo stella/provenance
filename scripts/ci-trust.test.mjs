@@ -94,3 +94,12 @@ test("the AI sync workflow also gates repository scripts", () => {
   assert.notEqual(unguarded, aiWorkflow);
   assert.ok(violations(unguarded).includes("sync-ai"));
 });
+
+test("cargo-deny keeps advisories in the shared action", () => {
+  assert.match(workflow, /cargo deny check bans licenses sources/);
+  assert.doesNotMatch(workflow, /cargo deny check(?:\s|$)(?!bans licenses sources)/m);
+  assert.match(
+    workflow,
+    /uses: stella\/\.github\/\.github\/actions\/cargo-deny-advisories@[a-f0-9]{40}[\s\S]*?base-sha: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.merge_group\.base_sha \}\}[\s\S]*?manifest-path: Cargo\.toml[\s\S]*?config: deny\.toml[\s\S]*?lockfile: Cargo\.lock/,
+  );
+});
