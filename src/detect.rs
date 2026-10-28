@@ -196,11 +196,6 @@ mod tests {
         )
         .unwrap();
 
-        fs::write(
-            root.join("Cargo.toml"),
-            "[workspace]\nmembers = [\"crates/*\"]\n",
-        )
-        .unwrap();
         fs::create_dir_all(root.join("crates/core")).unwrap();
         fs::write(
             root.join("crates/core/Cargo.toml"),
@@ -208,11 +203,17 @@ mod tests {
         )
         .unwrap();
 
-        let projects = discover_projects(root).unwrap();
-        assert_eq!(projects.len(), 1);
-        assert_eq!(projects[0].id, "root");
-        assert_eq!(projects[0].path, PathBuf::from("."));
-        assert_eq!(projects[0].ecosystems.len(), 2);
+        for manifest in [
+            "[workspace]\nmembers = [\"crates/*\"]\n",
+            "workspace = {\n members = [\"crates/*\"],\n}\n",
+        ] {
+            fs::write(root.join("Cargo.toml"), manifest).unwrap();
+            let projects = discover_projects(root).unwrap();
+            assert_eq!(projects.len(), 1);
+            assert_eq!(projects[0].id, "root");
+            assert_eq!(projects[0].path, PathBuf::from("."));
+            assert_eq!(projects[0].ecosystems.len(), 2);
+        }
     }
 
     #[test]
