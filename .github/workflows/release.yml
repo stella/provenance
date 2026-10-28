@@ -67,7 +67,7 @@ jobs:
           artifact_dir="dist/provenance-${VERSION}-${TARGET}"
           mkdir -p "$artifact_dir"
           cp "target/${TARGET}/release/provenance" "$artifact_dir/"
-          cp README.md LICENSE "$artifact_dir/"
+          cp README.md LICENSE THIRD_PARTY_NOTICES "$artifact_dir/"
           tar -C dist -czf "dist/provenance-${VERSION}-${TARGET}.${ARCHIVE_EXT}" "$(basename "$artifact_dir")"
           rm -rf "$artifact_dir"
 
@@ -83,6 +83,7 @@ jobs:
           Copy-Item "target/$env:TARGET/release/provenance.exe" "$artifactDir/provenance.exe"
           Copy-Item README.md "$artifactDir/README.md"
           Copy-Item LICENSE "$artifactDir/LICENSE"
+          Copy-Item THIRD_PARTY_NOTICES "$artifactDir/THIRD_PARTY_NOTICES"
           Compress-Archive -Path "$artifactDir/*" -DestinationPath "dist/provenance-$env:VERSION-$env:TARGET.zip"
           Remove-Item -Recurse -Force $artifactDir
 
