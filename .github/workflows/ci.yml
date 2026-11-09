@@ -45,7 +45,7 @@ jobs:
       && (github.event_name != 'pull_request'
           || needs.trust-check.outputs.trusted == 'true')
     env:
-      STELLA_SOURCE_LINT_REV: a1bd81740ecb4b66999f56d1716e1190c4e7272f
+      STELLA_SOURCE_LINT_REV: 51a4412dfe02203c24a3495f14ec99405acb7527
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -124,7 +124,7 @@ jobs:
           bun-version: latest
 
       - name: Install cdxgen
-        run: npm install -g @cyclonedx/cdxgen@12.1.5
+        run: npm install -g @cyclonedx/cdxgen@12.9.0
 
       - id: syft
         uses: anchore/sbom-action/download-syft@66cbf4bc1f1c0d2edc94016e65bc221b6bb0ad6c # v0.24.3
