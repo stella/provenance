@@ -89,10 +89,22 @@ jobs:
       - name: Package
         run: cargo package --locked
 
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: "1.4.4"
+
       - name: License audit
         run: |
           cargo install cargo-deny --locked
-          cargo deny check
+          cargo deny check bans licenses sources
+
+      - name: Advisory audit
+        uses: stella/.github/.github/actions/cargo-deny-advisories@3e9057a176377ddfa34d7897025934d1feb7ce9f
+        with:
+          base-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+          manifest-path: Cargo.toml
+          config: deny.toml
+          lockfile: Cargo.lock
 
   integration-real:
     needs: [trust-check]
@@ -119,9 +131,9 @@ jobs:
       - name: Validate workflow trust contracts
         run: node --test scripts/ci-trust.test.mjs
 
-      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          bun-version: latest
+          bun-version: "1.4.4"
 
       - name: Install cdxgen
         run: npm install -g @cyclonedx/cdxgen@12.9.0
