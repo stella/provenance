@@ -85,7 +85,7 @@ impl Config {
         let raw = fs::read_to_string(&path)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to read config at {}", path.display()))?;
-        let config: Self = serde_yaml::from_str(&raw)
+        let config: Self = serde_saphyr::from_str(&raw)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
         config.validate()?;
@@ -174,6 +174,36 @@ pub fn resolve_output_dir(root: &Path, config: &Config, explicit_path: Option<&P
 #[cfg(test)]
 mod tests {
     use super::{Config, SbomConfig};
+
+    #[test]
+    fn yaml_configuration_round_trips_ambiguous_strings_and_defaults() {
+        for value in [
+            "null",
+            "true",
+            "0123",
+            "yes",
+            "a: b",
+            "#note",
+            "právní\nřádek",
+        ] {
+            let config = Config {
+                version: 1,
+                output_dir: value.into(),
+                notice: Default::default(),
+                sbom: Default::default(),
+                projects: vec![super::ProjectConfig {
+                    id: value.into(),
+                    path: value.into(),
+                    ecosystems: vec![super::Ecosystem::Javascript, super::Ecosystem::Rust],
+                }],
+                containers: Vec::new(),
+            };
+            config.validate().unwrap();
+            let yaml = serde_saphyr::to_string(&config).unwrap();
+            let decoded: Config = serde_saphyr::from_str(&yaml).unwrap();
+            assert_eq!(decoded, config);
+        }
+    }
 
     #[test]
     fn rejects_empty_sbom_exclude_regexes() {

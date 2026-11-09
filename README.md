@@ -77,7 +77,7 @@ cargo install --path .
 
 ## Runtime prerequisites
 
-The CLI itself is a single Rust binary. Analysis still depends on ecosystem tooling:
+The CLI itself is a single Rust binary. Building from source requires Rust 1.89 or newer. Analysis still depends on ecosystem tooling:
 
 - `cdxgen` for JavaScript and Rust SBOM generation
   - supported discovery order: `cdxgen`, `bunx @cyclonedx/cdxgen`, `npx --yes @cyclonedx/cdxgen`
