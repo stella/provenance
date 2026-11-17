@@ -85,7 +85,7 @@ impl Config {
         let raw = fs::read_to_string(&path)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to read config at {}", path.display()))?;
-        let config: Self = serde_saphyr::from_str(&raw)
+        let config: Self = noyalib::from_str(&raw)
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to parse {}", path.display()))?;
         config.validate()?;
@@ -199,8 +199,8 @@ mod tests {
                 containers: Vec::new(),
             };
             config.validate().unwrap();
-            let yaml = serde_saphyr::to_string(&config).unwrap();
-            let decoded: Config = serde_saphyr::from_str(&yaml).unwrap();
+            let yaml = noyalib::to_string(&config).unwrap();
+            let decoded: Config = noyalib::from_str(&yaml).unwrap();
             assert_eq!(decoded, config);
         }
     }

@@ -166,7 +166,7 @@ fn init_discovers_workspace_roots() {
         .stdout(predicate::str::contains(".provenance.yml"));
 
     let config = fs::read_to_string(temp.path().join(".provenance.yml")).unwrap();
-    let parsed: serde_json::Value = serde_saphyr::from_str(&config).unwrap();
+    let parsed: serde_json::Value = noyalib::from_str(&config).unwrap();
     assert_eq!(parsed["output_dir"], "provenance");
     assert_eq!(
         parsed["projects"],
