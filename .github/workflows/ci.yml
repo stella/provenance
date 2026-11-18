@@ -101,7 +101,7 @@ jobs:
           cargo deny check bans licenses sources
 
       - name: Advisory audit
-        uses: stella/.github/.github/actions/cargo-deny-advisories@12eb83b8c6bd42a0bead73d9c6bc30b4caad6433
+        uses: stella/.github/.github/actions/cargo-deny-advisories@aa3a8ddacb040f6d9c4b00b1b0ee160363a309fd
         with:
           base-sha: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
           manifest-path: Cargo.toml
