@@ -33,12 +33,13 @@ The workflow is file-based:
   especially when your dependency graph includes platform-specific packages.
 - `notice.internal_scopes` can be used to exclude first-party scoped packages
   from generated notices and repo SBOM component inventories.
-- The JavaScript SBOM reflects whatever is present in `node_modules` at
-  generation time. Install **production dependencies only** before running
-  (for example `bun install --frozen-lockfile --production`, or
-  `npm ci --omit=dev`) so the generated SBOM and notices describe the shipped
-  closure and do not include development-only dependencies. For JavaScript
-  projects the tool does not pass cdxgen `--required-only`, because for bun
+- The JavaScript SBOM lists exactly the production-dependency closure resolved
+  from `package.json` and a supported lockfile (`bun.lock` text format or
+  `package-lock.json` v3), independent of the contents of `node_modules`.
+  Dependencies excluded by a lockfile package's `os` or `cpu` constraints on
+  the generating platform are not part of that closure. Missing or unsupported
+  lockfiles and incomplete cdxgen results are errors. For JavaScript projects
+  the tool does not pass cdxgen `--required-only`, because for bun
   lockfiles that flag drops shipped transitive dependencies (and production
   dependencies imported only from type-declaration or test files) instead of
   dev dependencies. Non-JavaScript projects (for example Rust crates) keep

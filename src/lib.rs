@@ -3,6 +3,7 @@ mod commands;
 mod config;
 mod detect;
 mod drift;
+mod javascript;
 mod notice;
 mod sbom;
 
