@@ -5,6 +5,8 @@ on:
     branches: [main]
   pull_request:
     types: [opened, synchronize, reopened, ready_for_review, labeled]
+  merge_group:
+    types: [checks_requested]
 
 permissions:
   contents: read
@@ -133,3 +135,26 @@ jobs:
         run: cargo test --test integration_real -- --ignored
         env:
           PROVENANCE_SYFT: ${{ steps.syft.outputs.cmd }}
+
+  ci-result:
+    if: always()
+    needs: [trust-check, rust, integration-real]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Require every validation job
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          TRUST_RESULT: ${{ needs.trust-check.result }}
+          RUST_RESULT: ${{ needs.rust.result }}
+          INTEGRATION_RESULT: ${{ needs.integration-real.result }}
+        run: |
+          test "$RUST_RESULT" = success
+          test "$INTEGRATION_RESULT" = success
+          if [ "$EVENT_NAME" = pull_request ]; then
+            test "$TRUST_RESULT" = success
+          else
+            # The trust check is pull-request-only.
+            case "$TRUST_RESULT" in success|skipped) ;; *) exit 1 ;; esac
+          fi
