@@ -22,6 +22,11 @@ const violations = (source) => {
       if (/uses:|\b(?:node|bun|cargo|npm|python|uv)\b/.test(body)) failures.push(name);
       continue;
     }
+    if (name === "ci-result") {
+      // The aggregate only evaluates dependency results, without checking out code.
+      if (/uses:|scripts\/|\b(?:node|bun|cargo|npm|python|uv)\b/.test(body)) failures.push(name);
+      continue;
+    }
     if (name === "workflow-lint") {
       if (/scripts\/|\b(?:node|bun|cargo|npm|python|uv)\b/.test(body)) failures.push(name);
       continue;
@@ -65,7 +70,13 @@ test("every CI job that can execute repository code depends on the fork trust ga
 
 test("the guard catches missing trust dependencies in every guarded job", () => {
   for (const [, name, body] of jobs(workflow)) {
-    if (name === "trust-check" || name === "check-changes" || name === "workflow-lint") continue;
+    if (
+      name === "trust-check" ||
+      name === "check-changes" ||
+      name === "workflow-lint" ||
+      name === "ci-result"
+    )
+      continue;
     const unguarded = body.replace(/^    needs:[^\n]*\n/m, "");
     assert.notEqual(unguarded, body);
     assert.ok(violations(workflow.replace(body, unguarded)).includes(name), name);
@@ -93,4 +104,13 @@ test("the AI sync workflow also gates repository scripts", () => {
   const unguarded = aiWorkflow.replace("    needs: [trust-check]\n", "");
   assert.notEqual(unguarded, aiWorkflow);
   assert.ok(violations(unguarded).includes("sync-ai"));
+});
+
+test("cargo-deny keeps advisories in the shared action", () => {
+  assert.match(workflow, /cargo deny check bans licenses sources/);
+  assert.doesNotMatch(workflow, /cargo deny check(?:\s|$)(?!bans licenses sources)/m);
+  assert.match(
+    workflow,
+    /uses: stella\/\.github\/\.github\/actions\/cargo-deny-advisories@[a-f0-9]{40}[\s\S]*?base-sha: \$\{\{ github\.event\.pull_request\.base\.sha \|\| github\.event\.merge_group\.base_sha \}\}[\s\S]*?manifest-path: Cargo\.toml[\s\S]*?config: deny\.toml[\s\S]*?lockfile: Cargo\.lock/,
+  );
 });
