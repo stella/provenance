@@ -36,7 +36,7 @@ pub fn run(root: PathBuf, config_path: Option<PathBuf>, force: bool) -> Result<(
             .into_diagnostic()
             .wrap_err_with(|| format!("failed to create {}", parent.display()))?;
     }
-    let rendered = serde_yaml::to_string(&config)
+    let rendered = serde_saphyr::to_string(&config)
         .into_diagnostic()
         .wrap_err("failed to render config file")?;
     fs::write(&path, rendered)

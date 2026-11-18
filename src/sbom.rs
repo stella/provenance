@@ -791,12 +791,11 @@ fn normalize_hash_algorithms(value: &mut Value) {
         Value::Object(object) => {
             let digest_len = object.get("content").and_then(Value::as_str).map(str::len);
 
-            if digest_len == Some(64) {
-                if let Some(Value::String(algorithm)) = object.get_mut("alg") {
-                    if algorithm == "SHA-384" {
-                        *algorithm = String::from("SHA-256");
-                    }
-                }
+            if digest_len == Some(64)
+                && let Some(Value::String(algorithm)) = object.get_mut("alg")
+                && algorithm == "SHA-384"
+            {
+                *algorithm = String::from("SHA-256");
             }
 
             for child in object.values_mut() {
