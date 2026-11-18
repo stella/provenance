@@ -118,6 +118,18 @@ fn write_js_fixture(root: &Path) {
         "import createDebug from \"debug\";\nexport const d = createDebug;\n",
     );
 
+    // The tool derives the production closure from the project lockfile, and
+    // `bun install --production` never writes one, so resolve bun.lock first.
+    let status = StdCommand::new("bun")
+        .arg("install")
+        .arg("--lockfile-only")
+        .arg("--ignore-scripts")
+        .current_dir(root)
+        .status()
+        .expect("bun is required for the real JavaScript cdxgen test");
+    assert!(status.success());
+    assert!(root.join("bun.lock").is_file());
+
     // The tool runs cdxgen with --no-install-deps, so the production closure must
     // already be materialized in node_modules. Installing production-only keeps
     // development dependencies out of the generated SBOM.
