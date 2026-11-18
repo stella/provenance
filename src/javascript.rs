@@ -76,17 +76,28 @@ impl std::error::Error for JavascriptClosureError {
 
 impl Diagnostic for JavascriptClosureError {}
 
+/// A dependency edge as the lockfile declares it. `optional` covers
+/// `optionalDependencies` and peers marked optional (`optionalPeers` in
+/// bun.lock, `peerDependenciesMeta` in package-lock.json): package managers
+/// skip those when nothing provides them, so an unresolved optional edge is not
+/// an error.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct DependencySpec {
+    spec: String,
+    optional: bool,
+}
+
 #[derive(Clone, Debug)]
 struct LockedPackage {
     identity: PackageIdentity,
-    dependencies: BTreeMap<String, String>,
+    dependencies: BTreeMap<String, DependencySpec>,
     os: Vec<String>,
     cpu: Vec<String>,
 }
 
 #[derive(Debug)]
 struct LockGraph {
-    roots: BTreeMap<String, String>,
+    roots: BTreeMap<String, DependencySpec>,
     packages: BTreeMap<String, LockedPackage>,
 }
 
@@ -199,12 +210,10 @@ fn bun_closure(path: &Path) -> Result<BTreeSet<PackageIdentity>, JavascriptClosu
         })?;
     let mut roots = BTreeMap::new();
     for workspace in workspaces.values().filter_map(Value::as_object) {
-        for section in ["dependencies", "optionalDependencies", "peerDependencies"] {
-            roots.extend(
-                dependency_map(workspace, section)
-                    .into_iter()
-                    .filter(|(_, spec)| !spec.starts_with("workspace:")),
-            );
+        for (name, dependency) in declared_dependencies(workspace) {
+            if !dependency.spec.starts_with("workspace:") {
+                merge_dependency(&mut roots, name, dependency);
+            }
         }
     }
 
@@ -227,13 +236,7 @@ fn bun_closure(path: &Path) -> Result<BTreeSet<PackageIdentity>, JavascriptClosu
             continue;
         };
         let metadata = items.get(2).and_then(Value::as_object);
-        let mut dependencies = metadata
-            .map(|m| dependency_map(m, "dependencies"))
-            .unwrap_or_default();
-        if let Some(m) = metadata {
-            dependencies.extend(dependency_map(m, "optionalDependencies"));
-            dependencies.extend(dependency_map(m, "peerDependencies"));
-        }
+        let dependencies = metadata.map(declared_dependencies).unwrap_or_default();
         graph.insert(
             key.clone(),
             LockedPackage {
@@ -275,9 +278,7 @@ fn package_lock_closure(path: &Path) -> Result<BTreeSet<PackageIdentity>, Javasc
             reason: String::from("missing root package"),
         }
     })?;
-    let mut roots = dependency_map(root, "dependencies");
-    roots.extend(dependency_map(root, "optionalDependencies"));
-    roots.extend(dependency_map(root, "peerDependencies"));
+    let roots = declared_dependencies(root);
     let mut graph = BTreeMap::new();
     for (location, entry) in packages {
         if location.is_empty() {
@@ -292,9 +293,7 @@ fn package_lock_closure(path: &Path) -> Result<BTreeSet<PackageIdentity>, Javasc
         let Some(name) = package_name_from_location(location) else {
             continue;
         };
-        let mut dependencies = dependency_map(object, "dependencies");
-        dependencies.extend(dependency_map(object, "optionalDependencies"));
-        dependencies.extend(dependency_map(object, "peerDependencies"));
+        let dependencies = declared_dependencies(object);
         graph.insert(
             location.clone(),
             LockedPackage {
@@ -316,14 +315,19 @@ fn walk(graph: LockGraph) -> Result<BTreeSet<PackageIdentity>, JavascriptClosure
     let mut queue = graph
         .roots
         .into_iter()
-        .map(|(name, spec)| (String::from("package.json"), name, spec))
+        .map(|(name, dependency)| (String::from("package.json"), name, dependency))
         .collect::<VecDeque<_>>();
     let mut visited = BTreeSet::new();
-    while let Some((parent, name, spec)) = queue.pop_front() {
+    while let Some((parent, name, dependency)) = queue.pop_front() {
         if is_node_builtin(&name) {
             continue;
         }
-        let Some((key, package)) = resolve_locked(&graph.packages, &name, &spec, &parent) else {
+        let Some((key, package)) =
+            resolve_locked(&graph.packages, &name, &dependency.spec, &parent)
+        else {
+            if dependency.optional {
+                continue;
+            }
             return Err(JavascriptClosureError::Unresolved { parent, name });
         };
         if !visited.insert(key.clone()) || !platform_matches(package) {
@@ -359,6 +363,56 @@ fn resolve_locked<'a>(
             let first = matches.next()?;
             matches.next().is_none().then(|| (first.0.clone(), first.1))
         })
+}
+
+/// Collects the runtime dependency edges a package or workspace declares.
+/// Development dependencies never ship and are left out.
+fn declared_dependencies(
+    object: &serde_json::Map<String, Value>,
+) -> BTreeMap<String, DependencySpec> {
+    let mut optional_peers = string_list(object.get("optionalPeers"))
+        .into_iter()
+        .collect::<BTreeSet<_>>();
+    optional_peers.extend(
+        object
+            .get("peerDependenciesMeta")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter(|(_, meta)| meta.get("optional").and_then(Value::as_bool) == Some(true))
+            .map(|(name, _)| name.clone()),
+    );
+    let mut dependencies = BTreeMap::new();
+    for (section, optional) in [
+        ("dependencies", Some(false)),
+        ("optionalDependencies", Some(true)),
+        ("peerDependencies", None),
+    ] {
+        for (name, spec) in dependency_map(object, section) {
+            let optional = optional.unwrap_or_else(|| optional_peers.contains(&name));
+            merge_dependency(&mut dependencies, name, DependencySpec { spec, optional });
+        }
+    }
+    dependencies
+}
+
+/// Records an edge, keeping it required when any declaration requires it.
+fn merge_dependency(
+    dependencies: &mut BTreeMap<String, DependencySpec>,
+    name: String,
+    dependency: DependencySpec,
+) {
+    match dependencies.entry(name) {
+        std::collections::btree_map::Entry::Vacant(entry) => {
+            entry.insert(dependency);
+        }
+        std::collections::btree_map::Entry::Occupied(mut entry) => {
+            let existing = entry.get_mut();
+            if existing.optional && !dependency.optional {
+                *existing = dependency;
+            }
+        }
+    }
 }
 
 fn dependency_map(object: &serde_json::Map<String, Value>, key: &str) -> BTreeMap<String, String> {
@@ -539,6 +593,61 @@ mod tests {
         .map(|(name, version)| (name.to_string(), version.to_string()))
         .collect::<BTreeSet<_>>();
         assert_eq!(closure, expected);
+    }
+
+    #[test]
+    fn skips_unresolved_optional_edges_and_rejects_required_ones() {
+        let temp = tempdir().unwrap();
+        let bun_lock = |debug_metadata: &str| {
+            format!(
+                r#"{{
+          "lockfileVersion": 1,
+          "workspaces": {{
+            "": {{ "name": "root", "dependencies": {{ "debug": "4.3.4" }}, "optionalDependencies": {{ "absent-optional": "1.0.0" }} }},
+          }},
+          "packages": {{
+            "debug": ["debug@4.3.4", "", {debug_metadata}],
+            "ms": ["ms@2.1.2", "", {{}}],
+          }},
+        }}"#
+            )
+        };
+        let expected = [("debug", "4.3.4"), ("ms", "2.1.2")]
+            .into_iter()
+            .map(|(name, version)| (name.to_string(), version.to_string()))
+            .collect::<BTreeSet<_>>();
+
+        fs::write(
+            temp.path().join("bun.lock"),
+            bun_lock(r#"{ "dependencies": { "ms": "2.1.2" }, "peerDependencies": { "supports-color": "*" }, "optionalPeers": ["supports-color"] }"#),
+        )
+        .unwrap();
+        assert_eq!(production_closure(temp.path()).unwrap(), expected);
+
+        fs::write(
+            temp.path().join("bun.lock"),
+            bun_lock(r#"{ "dependencies": { "ms": "2.1.2" }, "peerDependencies": { "supports-color": "*" } }"#),
+        )
+        .unwrap();
+        assert!(matches!(
+            production_closure(temp.path()),
+            Err(JavascriptClosureError::Unresolved { name, .. }) if name == "supports-color"
+        ));
+
+        fs::remove_file(temp.path().join("bun.lock")).unwrap();
+        fs::write(
+            temp.path().join("package-lock.json"),
+            r#"{
+              "lockfileVersion": 3,
+              "packages": {
+                "": { "name": "root", "dependencies": { "debug": "4.3.4" } },
+                "node_modules/debug": { "version": "4.3.4", "dependencies": { "ms": "2.1.2" }, "peerDependencies": { "supports-color": "*" }, "peerDependenciesMeta": { "supports-color": { "optional": true } } },
+                "node_modules/ms": { "version": "2.1.2" }
+              }
+            }"#,
+        )
+        .unwrap();
+        assert_eq!(production_closure(temp.path()).unwrap(), expected);
     }
 
     #[test]
