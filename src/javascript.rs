@@ -426,7 +426,7 @@ fn dependency_map(object: &serde_json::Map<String, Value>, key: &str) -> BTreeMa
 }
 
 fn parse_bun_resolution(resolution: &str) -> Option<PackageIdentity> {
-    let value = resolution.strip_prefix("npm:").unwrap_or(resolution);
+    let value = resolution.trim_prefix("npm:");
     if value.contains("@workspace:") || value.starts_with("workspace:") {
         return None;
     }
@@ -490,7 +490,7 @@ fn node_arch() -> &'static str {
 }
 
 pub(crate) fn is_node_builtin(name: &str) -> bool {
-    let name = name.strip_prefix("node:").unwrap_or(name);
+    let name = name.trim_prefix("node:");
     matches!(
         name,
         "assert"

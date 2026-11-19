@@ -33,6 +33,9 @@ used_underscore_binding = "warn"
 [lints.rust]
 unsafe_code = "warn"
 
+[lints.cargo]
+unused_dependencies = "deny"
+
 [lints.rustdoc]
 private_intra_doc_links = "allow"
 

@@ -104,7 +104,7 @@ pub fn discover_projects(root: &Path) -> Result<Vec<ProjectConfig>> {
             continue;
         }
 
-        let relative = path.strip_prefix(root).unwrap_or(&path);
+        let relative = path.trim_prefix(root);
         projects.push(ProjectConfig {
             id: slugify(relative),
             path: if relative.as_os_str().is_empty() {
